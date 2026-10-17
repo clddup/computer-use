@@ -21,7 +21,11 @@ const files = new Map([
 for (const [name, content] of files) {
   const path = resolve(root, name);
   if (process.argv.includes('--check')) {
-    if (await readFile(path, 'utf8') !== content) throw new Error(`Protocol drift: ${name}`);
+    const actual = await readFile(path, 'utf8');
+    const matches = name.endsWith('.json')
+      ? JSON.stringify(JSON.parse(actual)) === JSON.stringify(JSON.parse(content))
+      : actual === content;
+    if (!matches) throw new Error(`Protocol drift: ${name}`);
   } else {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, content);
