@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { validator } from '../packages/protocol/dist/index.js';
 
@@ -21,6 +22,9 @@ const invalid = [
   request('act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind: 'scroll', target: { kind: 'image', image_id: 'i', x: 0, y: 0 }, dx: 2147483648, dy: 0 } }),
 ];
 describe('Generated TypeScript/Rust wire compatibility', () => {
+  it('emits the protocol schema asset alongside the built package', () => {
+    expect(existsSync(new URL('../packages/protocol/dist/schema.json', import.meta.url))).toBe(true);
+  });
   it('agrees on valid messages and rejects malformed/host-authorization parameters', () => {
     const values = [...samples, ...invalid];
     const native = spawnSync(helper, ['--validate-protocol'], { input: values.map(v => JSON.stringify(v)).join('\n') + '\n', encoding: 'utf8' });

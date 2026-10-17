@@ -1,6 +1,6 @@
 # Computer-use 项目交接
 
-> **实施后的状态更新（2026-10-17）**：下面原交接内容保留为历史背景，不再代表当前代码状态。当前入口为 [README](README.md)、[实际验证记录](docs/verification.md) 和 [平台矩阵](docs/platforms.md)。工程已按确认的布局分为独立 `native/` Rust 与 `typescript/` Node 子工程，根目录没有两种项目清单。Windows SDK/MCP 自建窗口闭环与 stop/EOF/TTL/真实响应丢失测试已通过；新增固定 host-approved `allowed_apps` profile 的 Windows 冷启动 list/launch/get/activate/observe/click/stop debug/release 验收；Rust 12 项、TypeScript 16 项测试通过。Linux 仅通过 aarch64 cargo check/clippy，macOS 未在原生环境编译；不要把三平台源码当作三平台验收通过。原文中的“只有交接文件、尚未实施”以及旧目录建议已过时。没有提交、推送、发布或修改全局 MCP 配置。
+> **实施后的状态更新（2026-10-17）**：下面原交接内容保留为历史背景，不再代表当前代码状态。当前入口为 [README](README.md)、[实际验证记录](docs/verification.md) 和 [平台矩阵](docs/platforms.md)。工程已按确认的布局分为独立 `native/` Rust 与 `typescript/` Node 子工程，根目录没有两种项目清单。Windows SDK/MCP 自建窗口闭环与 stop/EOF/TTL/真实响应丢失测试已通过；新增固定 host-approved `allowed_apps` profile 的 Windows 冷启动 list/launch/get/activate/observe/click/stop debug/release 验收；Rust 12 项、TypeScript 17 项测试通过（tsdown/Rolldown 构建与独立 typecheck）。Linux 仅通过 aarch64 cargo check/clippy，macOS 未在原生环境编译；不要把三平台源码当作三平台验收通过。原文中的“只有交接文件、尚未实施”以及旧目录建议已过时。没有提交、推送、发布或修改全局 MCP 配置。
 
 > 更新时间：2026-10-17。供在 `D:\clddup\computer-use` 新建的对话继续使用。
 > 这是一份用户要求生成的交接文档，不代表所有建议均已完成或用户已批准实施。

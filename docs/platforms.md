@@ -44,4 +44,4 @@ AT-SPI 窗口关联依据 bus owner PID、标题与几何，模糊则拒绝。�
 
 ## TS 分发
 
-四个 workspace 包目前 private/workspace 方式使用，未发布 npm。构建顺序 protocol→runtime→sdk/mcp。分发 helper 是宿主责任，MCP 默认路径仅适合源码仓库 debug 布局，生产必须显式 `--helper`。不要把仓库的默认 debug 路径当作全局安装协议。
+四个 workspace 包目前 private/workspace 方式使用，未发布 npm。构建顺序 protocol→runtime→sdk/mcp，由 tsdown（Rolldown）生成 ESM 与声明文件，严格类型检查单独通过 `pnpm --dir typescript typecheck` 执行。分发 helper 是宿主责任，MCP 默认路径仅适合源码仓库 debug 布局，生产必须显式 `--helper`。不要把仓库的默认 debug 路径当作全局安装协议。

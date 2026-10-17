@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/protocol/src/schema.json"
+  ],
+  "exclude": ["node_modules", "**/dist"]
+}

@@ -20,6 +20,6 @@
     "@independent-cu/protocol": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsdown"
   }
 }

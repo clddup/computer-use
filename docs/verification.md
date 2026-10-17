@@ -17,7 +17,7 @@
 | Windows `cargo build --release --locked` | 成功，优化版 helper 也通过完整 16 组真实 GUI 验收及冷启动验收 |
 | `cargo test --workspace --locked` | **12** 项通过：core 9、helper 3；其他 crate 无独立单测，不冒充全覆盖 |
 | Windows `cargo clippy --workspace --all-targets --locked -- -D warnings` | 成功，无警告 |
-| `pnpm --dir typescript check` | 四包构建、schema/types 漂移检查、**16** 项 Vitest 均通过 |
+| `pnpm --dir typescript check` | tsdown/Rolldown 构建四包、schema/types 漂移检查、严格 no-emit typecheck、**17** 项 Vitest 均通过 |
 | Linux `cargo check --workspace --target aarch64-unknown-linux-gnu --locked` | 成功，只做类型检查，不证明链接/运行 |
 | Linux target `cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu --locked -- -D warnings` | 修正 scanline stride 的 div_ceil lint 后通过；新增异常 padding 拒绝 |
 | 文档内部链接检查 | README、docs、skill 共 8 个 Markdown 文件的本地链接均可解析 |

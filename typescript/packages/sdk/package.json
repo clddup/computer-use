@@ -24,6 +24,6 @@
     "@independent-cu/runtime": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsdown"
   }
 }

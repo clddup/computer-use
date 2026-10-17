@@ -31,7 +31,7 @@ pnpm --dir typescript install --frozen-lockfile
 pnpm --dir typescript check
 ```
 
-`check` 构建四个 TS 包、核对协议生成物并运行 Vitest。协议测试会实际启动当前平台的 debug helper，因此先构建 Rust。另一个路径可通过 `CU_HELPER` 指定（使用绝对路径）。
+`check` 使用 tsdown（Rolldown）构建四个 TS 包并生成 `.d.ts`，随后核对协议生成物、执行严格 no-emit 类型检查并运行 Vitest。协议测试会实际启动当前平台的 debug helper，因此先构建 Rust。另一个路径可通过 `CU_HELPER` 指定（使用绝对路径）。
 
 修改 wire 类型后运行：
 

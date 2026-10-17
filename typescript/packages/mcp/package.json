@@ -21,6 +21,6 @@
     "zod": "3.25.76"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsdown"
   }
 }

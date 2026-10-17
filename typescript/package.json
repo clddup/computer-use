@@ -4,9 +4,6 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.0",
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
-  },
   "engines": {
     "node": ">=24.14 <25"
   },
@@ -14,16 +11,19 @@
     "build": "pnpm -r --workspace-concurrency=1 run build",
     "protocol:generate": "node ../scripts/generate-protocol.mjs",
     "protocol:check": "node ../scripts/generate-protocol.mjs --check",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:gui": "node ../scripts/windows-e2e.mjs",
     "test:gui:cold-start": "node ../scripts/windows-cold-start-e2e.mjs",
-    "check": "pnpm build && pnpm protocol:check && pnpm test",
+    "check": "pnpm build && pnpm protocol:check && pnpm typecheck && pnpm test",
     "mcp": "node packages/mcp/dist/main.js"
   },
   "devDependencies": {
     "@types/node": "24.10.0",
+    "json-schema-to-typescript": "15.0.4",
+    "tsdown": "0.23.1",
     "typescript": "5.9.3",
-    "vitest": "3.2.4",
-    "json-schema-to-typescript": "15.0.4"
+    "vite": "8.3.4",
+    "vitest": "5.0.5"
   }
 }
