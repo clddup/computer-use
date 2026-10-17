@@ -4,5 +4,7 @@ minimumReleaseAge: 1440
 nodeLinker: hoisted
 injectWorkspacePackages: true
 dedupeInjectedDeps: false
+onlyBuiltDependencies:
+  - esbuild
 syncInjectedDepsAfterScripts:
   - build
