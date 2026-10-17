@@ -23,7 +23,7 @@ jobs:
           node-version: 24.14.0
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.13.0
+          version: 11.13.1
           run_install: false
       - name: Build native helper on the actual host
         run: cargo build --manifest-path native/Cargo.toml --workspace --locked
