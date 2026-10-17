@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/protocol", "crates/core", "crates/helper", "crates/platform-windows", "crates/platform-macos", "crates/platform-linux"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+schemars = "0.8.22"
+base64 = "0.22.1"
+png = "0.17.16"
+uuid = { version = "1.18.1", features = ["v4"] }

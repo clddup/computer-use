@@ -1,0 +1,14 @@
+[package]
+name = "cu-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cu-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+png.workspace = true
+uuid.workspace = true
+fs2 = "0.4.3"

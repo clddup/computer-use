@@ -1,0 +1,29 @@
+{
+  "name": "@independent-cu/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependenciesMeta": {
+    "@independent-cu/protocol": {
+      "injected": true
+    },
+    "@independent-cu/runtime": {
+      "injected": true
+    }
+  },
+  "dependencies": {
+    "@independent-cu/protocol": "workspace:*",
+    "@independent-cu/runtime": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  }
+}

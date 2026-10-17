@@ -1,0 +1,37 @@
+name: Native and TypeScript checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+      - name: Build native helper on the actual host
+        run: cargo build --manifest-path native/Cargo.toml --workspace --locked
+      - name: Rust tests
+        run: cargo test --manifest-path native/Cargo.toml --workspace --locked
+      - name: Install TypeScript dependencies
+        run: pnpm --dir typescript install --frozen-lockfile
+      - name: Build, generated protocol check, and unit/integration tests
+        run: pnpm --dir typescript check
+      # Hosted runners are not accepted as evidence of interactive desktop permissions.
+      # GUI E2E is explicitly run on a local, isolated Windows desktop using test:gui.

@@ -1,0 +1,13 @@
+[package]
+name = "cu-platform-macos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+links = "cu_macos_bridge"
+
+[dependencies]
+cu-core = { path = "../core" }
+cu-protocol = { path = "../protocol" }
+serde_json.workspace = true
+serde.workspace = true

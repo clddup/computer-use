@@ -1,0 +1,26 @@
+{
+  "name": "independent-computer-use",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.13.0",
+  "engines": {
+    "node": ">=24.14 <25"
+  },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 run build",
+    "protocol:generate": "node ../scripts/generate-protocol.mjs",
+    "protocol:check": "node ../scripts/generate-protocol.mjs --check",
+    "test": "vitest run",
+    "test:gui": "node ../scripts/windows-e2e.mjs",
+    "test:gui:cold-start": "node ../scripts/windows-cold-start-e2e.mjs",
+    "check": "pnpm build && pnpm protocol:check && pnpm test",
+    "mcp": "node packages/mcp/dist/main.js"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4",
+    "json-schema-to-typescript": "15.0.4"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+target/
+**/dist/
+*.tsbuildinfo
+.local/
+test-results/
+*.log
+.DS_Store
