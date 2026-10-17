@@ -71,7 +71,7 @@ TypeScript transport/runtime 测试中使用模拟子进程/传输，验证 chun
 - **Codex/WPS 类真实应用**：应用 profile 已支持 Windows 冷启动，但尚未用 WPS 或个人应用做 GUI 验收；不得把自建 fixture 结果当作 WPS 已成功。用户测试前仍需宿主明确写入 WPS 的固定、可审查启动 profile，并使用新空白文档。
 - **macOS**：Swift bridge 尚未在 Mac 上编译/加载；AX、TCC、ScreenCaptureKit、坐标和停止 GUI 验收、签名/公证仍待真实环境。rpath 元数据已接到最终 helper，但当前不声称已验证正确加载。
 - **Linux**：尚未原生链接/GUI 测试；EWMH frame、AT-SPI toolkit 兼容性与 Unicode 编辑语义待验。输入路径的同步 X11 roundtrip 在 X server 挂死时可能延迟取消，不保证该故障下有界停止。
-- **CI**：GitHub Actions run [39043805083](https://github.com/clddup/computer-use/actions/runs/39043805083) 已通过 Windows、Linux/macOS 原生构建、Rust 测试和 TypeScript 检查；GitHub hosted runner 结果不替代 macOS/Linux 原生 GUI 验收。未发布 npm 或安装包。
+- **CI**：GitHub Actions run [39046692426](https://github.com/clddup/computer-use/actions/runs/39046692426) 已通过 Windows、Linux/macOS 原生构建、Rust 测试和 TypeScript 检查；workflow 已迁移到 Node 24-compatible actions，GitHub hosted runner 结果不替代 macOS/Linux 原生 GUI 验收。未发布 npm 或安装包。
 - 观察树/截图非原子、locator 非强控件身份，TOCTOU 无法完全消除；Unix lease symlink 检查不是完整抗同用户竞态沙箱。
 - helper 崩溃/强杀/系统故障时不保证输入释放；不提供跨 epoch exactly-once，不把 dispatched 报为 verified。
 - 尚未形成三平台安装包/自动下载分发渠道，未发布 npm；当前是源码构建集成。
