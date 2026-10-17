@@ -24,7 +24,7 @@ for (const [name, content] of files) {
     const actual = await readFile(path, 'utf8');
     const matches = name.endsWith('.json')
       ? JSON.stringify(JSON.parse(actual)) === JSON.stringify(JSON.parse(content))
-      : actual.replaceAll('\\r\\n', '\\n') === content.replaceAll('\\r\\n', '\\n');
+      : actual.replaceAll('\r\n', '\n') === content.replaceAll('\r\n', '\n');
     if (!matches) throw new Error(`Protocol drift: ${name}`);
   } else {
     await mkdir(dirname(path), { recursive: true });
