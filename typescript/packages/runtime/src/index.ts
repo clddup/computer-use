@@ -18,6 +18,7 @@ export class ComputerRuntime {
     }
   }
   async capabilities(): Promise<Capabilities> {
+    await this.transport.negotiate();
     return assertWire('Capabilities', await this.transport.request('capabilities'));
   }
   private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -33,6 +34,7 @@ export class ComputerRuntime {
   async start(): Promise<{ session_id: string; helper_epoch: string; expires_at_ms: number }> {
     return this.exclusive(async () => {
       if (this.sessionId) throw new ComputerUseError('session_exists', 'Session already started');
+      await this.transport.negotiate();
       const value = await this.transport.request('start') as { session_id: string; helper_epoch: string; expires_at_ms: number };
       if (!value || typeof value.session_id !== 'string' || typeof value.helper_epoch !== 'string' || typeof value.expires_at_ms !== 'number') throw new ComputerUseError('protocol_error', 'Invalid start result');
       if (this.stopped) throw new ComputerUseError('stopped', 'Start was cancelled by stop');

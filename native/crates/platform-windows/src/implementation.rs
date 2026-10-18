@@ -1,4 +1,7 @@
-use cu_core::{cancelled, new_id, now_ms, png_base64, ApplicationPolicy, Backend, NativeAction};
+use cu_core::{
+    cancelled, new_id, now_ms, png_base64, ApplicationPolicy, Backend, NativeAction,
+    SemanticOperation,
+};
 use cu_protocol::*;
 use std::{
     process::{Command as ProcessCommand, Stdio},
@@ -108,9 +111,7 @@ unsafe fn window_info(handle: HWND) -> cu_protocol::Result<Window> {
 }
 unsafe extern "system" fn enumerate(handle: HWND, param: LPARAM) -> BOOL {
     if let Ok(window) = window_info(handle) {
-        if !window.title.is_empty() {
-            (*(param.0 as *mut Vec<Window>)).push(window);
-        }
+        (*(param.0 as *mut Vec<Window>)).push(window);
     }
     true.into()
 }
@@ -131,6 +132,174 @@ impl Drop for ComGuard {
         }
     }
 }
+unsafe fn semantic_capabilities(node: &IUIAutomationElement) -> Vec<String> {
+    let mut caps = vec![];
+    if !node.CurrentIsEnabled().is_ok_and(|v| v.as_bool())
+        || !node.CurrentIsPassword().is_ok_and(|v| !v.as_bool())
+        || !node.CurrentIsOffscreen().is_ok_and(|v| !v.as_bool())
+    {
+        return caps;
+    }
+    if node
+        .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+        .is_ok()
+    {
+        caps.push("invoke".into());
+    }
+    if node
+        .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+        .is_ok()
+    {
+        caps.push("toggle".into());
+    }
+    if node
+        .GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+        .is_ok()
+    {
+        caps.push("select".into());
+    }
+    if let Ok(pattern) = node.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) {
+        caps.push("read_value".into());
+        if pattern.CurrentIsReadOnly().is_ok_and(|v| !v.as_bool()) {
+            caps.push("set_value".into());
+        }
+    }
+    caps
+}
+unsafe fn semantic_node(
+    window: &Window,
+    element: &Element,
+    operation: SemanticOperation,
+) -> cu_protocol::Result<IUIAutomationElement> {
+    let automation: IUIAutomation =
+        CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).map_err(err)?;
+    let walker = automation.ControlViewWalker().map_err(err)?;
+    let mut node = automation.ElementFromHandle(hwnd(window)?).map_err(err)?;
+    let mut parts = element.locator.split('/');
+    if parts.next() != Some("root") {
+        return Err(cu_protocol::Error::new(
+            "stale_element",
+            "Invalid UIA locator",
+        ));
+    }
+    let mut depth = 0;
+    for part in parts {
+        depth += 1;
+        let index = part.parse::<usize>().map_err(err)?;
+        if depth > 16 || index >= 128 {
+            return Err(cu_protocol::Error::new(
+                "stale_element",
+                "UIA locator exceeds tree limits",
+            ));
+        }
+        node = walker.GetFirstChildElement(&node).map_err(err)?;
+        for _ in 0..index {
+            node = walker.GetNextSiblingElement(&node).map_err(err)?;
+        }
+        if node.CurrentProcessId().map_err(err)? != window.pid as i32
+            || node.CurrentIsPassword().map_err(err)?.as_bool()
+        {
+            return Err(cu_protocol::Error::new(
+                "permission_denied",
+                "UIA target is outside the authorized process or is a password",
+            ));
+        }
+    }
+    let r = node.CurrentBoundingRectangle().map_err(err)?;
+    let bounds = Rect {
+        x: r.left as f64,
+        y: r.top as f64,
+        width: (r.right - r.left) as f64,
+        height: (r.bottom - r.top) as f64,
+    };
+    if node.CurrentProcessId().map_err(err)? != window.pid as i32
+        || node.CurrentLocalizedControlType().map_err(err)? != element.role
+        || node.CurrentName().map_err(err)? != element.name
+        || element.bounds.as_ref() != Some(&bounds)
+    {
+        return Err(cu_protocol::Error::new(
+            "stale_element",
+            "UIA target identity or geometry changed",
+        ));
+    }
+    if let Some(expected) = &element.value {
+        let pattern = node
+            .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            .map_err(err)?;
+        let current: String = pattern
+            .CurrentValue()
+            .map_err(err)?
+            .to_string()
+            .chars()
+            .take(4096)
+            .collect();
+        if &current != expected {
+            return Err(cu_protocol::Error::new(
+                "stale_element",
+                "UIA value changed before semantic dispatch",
+            ));
+        }
+    }
+    if !semantic_capabilities(&node)
+        .iter()
+        .any(|c| c == operation.capability())
+    {
+        return Err(cu_protocol::Error::new(
+            "unsupported_action",
+            "Live UIA target does not support this operation",
+        ));
+    }
+    Ok(node)
+}
+unsafe fn semantic_perform(
+    window: &Window,
+    element: &Element,
+    operation: SemanticOperation,
+    value: &Option<String>,
+    cancel: &AtomicBool,
+) -> cu_protocol::Result<String> {
+    let _guard = ComGuard::new()?;
+    let node = semantic_node(window, element, operation)?;
+    cancelled(cancel)?;
+    let mechanism = match operation {
+        SemanticOperation::Invoke => {
+            node.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                .map_err(err)?
+                .Invoke()
+                .map_err(err)?;
+            "uia-invoke"
+        }
+        SemanticOperation::Toggle => {
+            node.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                .map_err(err)?
+                .Toggle()
+                .map_err(err)?;
+            "uia-toggle"
+        }
+        SemanticOperation::Select => {
+            node.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
+                UIA_SelectionItemPatternId,
+            )
+            .map_err(err)?
+            .Select()
+            .map_err(err)?;
+            "uia-selection"
+        }
+        SemanticOperation::SetValue => {
+            let value = value.as_ref().ok_or_else(|| {
+                cu_protocol::Error::new("invalid_params", "Missing replacement value")
+            })?;
+            node.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .map_err(err)?
+                .SetValue(&BSTR::from(value.as_str()))
+                .map_err(err)?;
+            "uia-value-pattern"
+        }
+    };
+    cancelled(cancel)?;
+    Ok(mechanism.into())
+}
+
 unsafe fn accessibility(window: &Window) -> cu_protocol::Result<Vec<Element>> {
     let _guard = ComGuard::new()?;
     let automation: IUIAutomation =
@@ -191,6 +360,7 @@ unsafe fn accessibility(window: &Window) -> cu_protocol::Result<Vec<Element>> {
             password,
             depth,
             locator: locator.clone(),
+            capabilities: Some(semantic_capabilities(&node)),
         });
         if password || depth >= 16 {
             continue;
@@ -410,6 +580,16 @@ unsafe fn foreground(handle: HWND, cancel: &AtomicBool) -> cu_protocol::Result<(
     }
     Ok(())
 }
+struct ThreadAttachment(u32, u32, bool);
+impl Drop for ThreadAttachment {
+    fn drop(&mut self) {
+        if self.2 {
+            unsafe {
+                let _ = AttachThreadInput(self.0, self.1, false);
+            }
+        }
+    }
+}
 unsafe fn activate_foreground(handle: HWND, cancel: &AtomicBool) -> cu_protocol::Result<()> {
     cancelled(cancel)?;
     if GetForegroundWindow() == handle {
@@ -430,7 +610,15 @@ unsafe fn activate_foreground(handle: HWND, cancel: &AtomicBool) -> cu_protocol:
         && foreground_thread != current_thread
         && foreground_thread != target_thread
         && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
-    let _ = ShowWindow(handle, SW_RESTORE);
+    let _target_attachment = ThreadAttachment(current_thread, target_thread, attached_target);
+    let _foreground_attachment =
+        ThreadAttachment(current_thread, foreground_thread, attached_foreground);
+    if IsIconic(handle).as_bool() {
+        return Err(cu_protocol::Error::new(
+            "invalid_window",
+            "Window was minimized; observe a visible window again",
+        ));
+    }
     let _ = SetWindowPos(
         handle,
         Some(HWND_TOP),
@@ -444,7 +632,6 @@ unsafe fn activate_foreground(handle: HWND, cancel: &AtomicBool) -> cu_protocol:
     let _ = SetActiveWindow(handle);
     let _ = SetFocus(Some(handle));
     let _ = SetForegroundWindow(handle);
-    SwitchToThisWindow(handle, true);
     let mut result = Ok(());
     for _ in 0..50 {
         cancelled(cancel)?;
@@ -457,12 +644,6 @@ unsafe fn activate_foreground(handle: HWND, cancel: &AtomicBool) -> cu_protocol:
             "Windows refused to activate the window",
         ));
         thread::sleep(Duration::from_millis(10));
-    }
-    if attached_foreground {
-        let _ = AttachThreadInput(current_thread, foreground_thread, false);
-    }
-    if attached_target {
-        let _ = AttachThreadInput(current_thread, target_thread, false);
     }
     result
 }
@@ -484,8 +665,8 @@ unsafe fn move_to(handle: HWND, x: f64, y: f64, cancel: &AtomicBool) -> cu_proto
 impl Backend for WindowsBackend {
     fn capabilities(&self) -> Capabilities {
         Capabilities { protocol_version:VERSION,platform:"windows".into(),backend:"win32-uia-wgc-sendinput".into(),available:true,reason:None,
-            actions:vec!["list_apps","launch_app","get_window","activate_window","click","type_text","key","scroll","drag"].into_iter().map(String::from).collect(),screenshot_methods:vec!["windows-graphics-capture".into()],
-            limitations:vec!["Interactive non-elevated desktop only; minimized windows rejected".into(),"Input requires foreground and unoccluded target; no secure desktop".into(),"AX and image timestamps are not atomic; set_value is not supported on this backend".into()] }
+            actions:vec!["list_apps","launch_app","get_window","activate_window","click","type_text","key","scroll","drag","invoke","toggle","select","set_value"].into_iter().map(String::from).collect(),screenshot_methods:vec!["windows-graphics-capture".into()],
+            limitations:vec!["Interactive non-elevated desktop only; minimized windows rejected".into(),"Input requires foreground and unoccluded target; no secure desktop".into(),"AX and image timestamps are not atomic; semantic UIA actions do not inject mouse/keyboard input or explicitly activate the window; providers may change focus".into()] }
     }
     fn list_windows(&self) -> cu_protocol::Result<Vec<Window>> {
         setup();
@@ -604,6 +785,25 @@ impl Backend for WindowsBackend {
         let now = now_ms();
         Ok(Observation{id:new_id(),helper_epoch:String::new(),window:window.clone(),captured_at_ms:now,expires_at_ms:now+30_000,elements,images,warnings:vec!["Accessibility tree is bounded to 512 nodes / 16 levels and is not atomic with capture".into()]})
     }
+    fn preflight(&self, window: &Window, action: &NativeAction) -> cu_protocol::Result<()> {
+        setup();
+        self.validate(window)?;
+        if let NativeAction::Semantic {
+            element, operation, ..
+        } = action
+        {
+            unsafe {
+                let _guard = ComGuard::new()?;
+                semantic_node(window, element, *operation)?;
+            }
+            Ok(())
+        } else {
+            Err(cu_protocol::Error::new(
+                "unsupported_action",
+                "Expected a semantic action",
+            ))
+        }
+    }
     fn perform(
         &self,
         window: &Window,
@@ -612,6 +812,14 @@ impl Backend for WindowsBackend {
     ) -> cu_protocol::Result<String> {
         setup();
         self.validate(window)?;
+        if let NativeAction::Semantic {
+            element,
+            operation,
+            value,
+        } = action
+        {
+            return unsafe { semantic_perform(window, element, *operation, value, cancel) };
+        }
         if matches!(action, NativeAction::SetValue { .. }) {
             return Err(cu_protocol::Error::new(
                 "unsupported_action",
@@ -637,6 +845,7 @@ impl Backend for WindowsBackend {
             }
             cancelled(cancel)?;
             activate_foreground(handle, cancel)?;
+            self.validate(window)?;
             let mut held = HeldInputs::new();
             match action {
                 NativeAction::Click {
@@ -707,7 +916,7 @@ impl Backend for WindowsBackend {
                     }
                     held.release_mouse()?;
                 }
-                NativeAction::SetValue { .. } => unreachable!(),
+                NativeAction::SetValue { .. } | NativeAction::Semantic { .. } => unreachable!(),
             }
         }
         Ok("sendinput".into())

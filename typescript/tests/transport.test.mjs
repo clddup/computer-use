@@ -22,6 +22,23 @@ afterEach(async () => { await transport.close(); vi.clearAllMocks(); });
 const respond = (index, result, extras = {}) => child.stdout.write(JSON.stringify({ version: 1, id: requests[index].id, result, error: null, ...extras }) + '\n');
 const act = () => transport.request('act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind: 'type_text', text: 'fixture' } }, 20);
 describe('Helper transport failure boundaries (isolated protocol tests, not GUI)', () => {
+  it('negotiates profile 2 using a profile 1 discovery and checks each response version', async () => {
+    const negotiation = transport.negotiate();
+    expect(requests[0].version).toBe(1);
+    respond(0, { protocol_version: 2, platform: 'windows', backend: 'test', available: true, reason: null, actions: ['click'], screenshot_methods: [], limitations: [] });
+    await negotiation;
+    const pending = transport.request('capabilities');
+    expect(requests[1].version).toBe(2);
+    respond(1, {}, { version: 2 }); await pending;
+    const mismatch = transport.request('capabilities'); respond(2, {}, { version: 1 });
+    await expect(mismatch).rejects.toMatchObject({ code: 'protocol_error' });
+  });
+  it('retains profile 1 when an old helper reports only profile 1', async () => {
+    const negotiation = transport.negotiate();
+    respond(0, { protocol_version: 1, platform: 'windows', backend: 'test', available: true, reason: null, actions: ['click'], screenshot_methods: [], limitations: [] });
+    await negotiation;
+    const pending = transport.request('start'); expect(requests[1].version).toBe(1); respond(1, {}); await pending;
+  });
   it('spawns without a shell and sends the versioned nested command', async () => {
     const pending = transport.request('capabilities'); respond(0, { available: true });
     expect(await pending).toEqual({ available: true });
@@ -47,7 +64,7 @@ describe('Helper transport failure boundaries (isolated protocol tests, not GUI)
   it('rejects malformed JSON, invalid envelopes and incompatible versions', async () => {
     for (const invalid of ['not-json\n', JSON.stringify({ version: 2, id: 'x', result: {}, error: null }) + '\n', JSON.stringify({ version: 1, id: 'x', result: {}, error: { code: 'x', message: 'x', may_have_executed: false } }) + '\n']) {
       const isolated = new HelperTransport({ helperPath: resolve('test-helper') });
-      const pending = isolated.request('capabilities'); child.stdout.write(invalid);
+      const pending = isolated.request('capabilities'); child.stdout.write(invalid.replace('"id":"x"', `"id":"${requests.at(-1).id}"`));
       await expect(pending).rejects.toMatchObject({ code: 'protocol_error' }); await isolated.close();
     }
   });

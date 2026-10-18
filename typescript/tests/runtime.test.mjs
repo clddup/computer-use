@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { request, close } = vi.hoisted(() => ({ request: vi.fn(), close: vi.fn() }));
 vi.mock('../packages/runtime/dist/transport.js', async original => {
   const actual = await original();
-  return { ...actual, HelperTransport: class { request = request; close = close; } };
+  return { ...actual, HelperTransport: class { request = request; close = close; async negotiate() {} } };
 });
 import { ComputerRuntime } from '../packages/runtime/dist/index.js';
 beforeEach(() => {

@@ -434,6 +434,7 @@ impl A11y {
                 password,
                 depth,
                 locator: format!("{}|{}", node.0, node.1),
+                capabilities: None,
             });
             if depth < 16 && !password {
                 let mut children = self.children(&node).unwrap_or_default();
@@ -772,6 +773,12 @@ impl Backend for LinuxBackend {
         action: &NativeAction,
         cancel: &AtomicBool,
     ) -> Result<String> {
+        if matches!(action, NativeAction::Semantic { .. }) {
+            return Err(Error::new(
+                "unsupported_action",
+                "UIA semantic actions are Windows-only",
+            ));
+        }
         let x = X11::open()?;
         x.validate(window)?;
         for _ in 0..20 {

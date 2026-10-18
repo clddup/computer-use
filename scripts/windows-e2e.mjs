@@ -22,7 +22,13 @@ const runtimes = [];
 let mcp;
 const outcomes = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function snapshot() { try { return JSON.parse(await readFile(oracle, 'utf8')); } catch { return undefined; } }
+async function snapshot() {
+  for (let i = 0; i < 10; i++) {
+    try { return JSON.parse(await readFile(oracle, 'utf8')); }
+    catch { await sleep(10); }
+  }
+  return undefined;
+}
 async function waitFor(test, label, timeout = 10_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const data = await snapshot(); if (data && test(data)) return data; await sleep(50); }
@@ -201,8 +207,123 @@ try {
   const state = observed.structuredContent; const checkbox = state.elements.find(e => e.name === 'Fixture Option'); assert.ok(checkbox);
   const acted = await mcp.callTool({ name: 'computer_act', arguments: { observation_id: state.id, action_id: 'mcp-check-option', action: { kind: 'click', button: 'left', target: { kind: 'element', element_id: checkbox.id } } } });
   assert.equal(acted.structuredContent.state, 'dispatched', JSON.stringify(acted)); await waitFor(value => value.option, 'MCP checkbox input');
+  const mcpSemanticState = (await mcp.callTool({ name: 'computer_observe', arguments: { window: windows[0], accessibility: true, screenshot: false } })).structuredContent;
+  const mcpBefore = await snapshot();
+  const mcpSemantic = await mcp.callTool({ name: 'computer_act', arguments: { observation_id: mcpSemanticState.id, action_id: 'mcp-semantic-invoke', action: { kind: 'invoke', element_id: element(mcpSemanticState, 'Fixture Increment').id } } });
+  assert.equal(mcpSemantic.structuredContent.mechanism, 'uia-invoke', JSON.stringify(mcpSemantic));
+  await waitFor(a => a.count === mcpBefore.count + 1, 'MCP semantic invoke');
   const stop = await mcp.callTool({ name: 'computer_stop', arguments: {} }); assert.ok(!stop.isError);
   await mcp.close(); mcp = undefined; record('MCP discovery, host-only authorization, real image content, input and stop');
+  const semantic = new Computer({ helperPath, policyPath }); runtimes.push(semantic);
+  await semantic.start();
+  const semanticObserve = async () => semantic.observe((await semantic.listWindows())[0], { screenshot: false, accessibility: true });
+  const unchangedPointer = (before, after, requireForeground = true) => {
+    assert.equal(after.cursor_x, before.cursor_x); assert.equal(after.cursor_y, before.cursor_y);
+    assert.equal(after.mouse_messages, before.mouse_messages, 'Semantic action must not post mouse input');
+    if (requireForeground) assert.equal(after.foreground_hwnd, before.foreground_hwnd, 'Foreground changed during foreground-fixture semantic action');
+  };
+  for (const [kind, name, mechanism, changed] of [
+    ['invoke', 'Fixture Increment', 'uia-invoke', (a, b) => a.count === b.count + 1],
+    ['toggle', 'Fixture Option', 'uia-toggle', (a, b) => a.option !== b.option],
+    ['select', 'Choice B', 'uia-selection', a => a.selected === 1],
+    ['set_value', 'Fixture Input', 'uia-value-pattern', a => a.text === 'UIA replacement 中文'],
+  ]) {
+    const state = await semanticObserve(); const node = element(state, name);
+    assert.ok(node.capabilities?.includes(kind), `${name} lacks ${kind}: ${JSON.stringify(node)}`);
+    await sleep(150); const before = await snapshot();
+    const action = { kind, element_id: node.id, ...(kind === 'set_value' ? { value: 'UIA replacement 中文' } : {}) };
+    const id = `semantic-${kind}`;
+    const result = await semantic.act(state.id, action, id);
+    assert.equal(result.state, 'dispatched', result.message); assert.equal(result.mechanism, mechanism);
+    const after = await waitFor(a => changed(a, before), kind);
+    unchangedPointer(before, after);
+    if (kind === 'set_value') assert.equal(after.key_messages, before.key_messages);
+    assert.deepEqual(await semantic.act(state.id, action, id), result);
+    await sleep(150); unchangedPointer(before, await snapshot());
+    record(`UIA ${kind}: real state, mechanism, no pointer movement or mouse messages, dedupe`);
+  }
+  let semanticState = await semanticObserve();
+  const surface = element(semanticState, 'Fixture Physical Surface');
+  assert.ok(!surface.capabilities?.includes('invoke'));
+  const beforeSurface = await snapshot();
+  const rejected = await semantic.act(semanticState.id, { kind: 'invoke', element_id: surface.id });
+  assert.equal(rejected.state, 'rejected'); await sleep(150); unchangedPointer(beforeSurface, await snapshot());
+  semanticState = await semanticObserve();
+  const physical = await semantic.act(semanticState.id, { kind: 'click', button: 'left', target: { kind: 'element', element_id: element(semanticState, 'Fixture Physical Surface').id } });
+  assert.equal(physical.state, 'dispatched', physical.message); assert.equal(physical.mechanism, 'sendinput');
+  const afterSurface = await waitFor(a => a.fallback_count === beforeSurface.fallback_count + 1, 'explicit physical surface click');
+  assert.equal(afterSurface.mouse_messages, beforeSurface.mouse_messages + 1);
+  record('Unsupported semantic action rejects without input; explicit new physical click dispatches once');
+  const semanticImage = await semantic.observe((await semantic.listWindows())[0], { screenshot: true, accessibility: true });
+  await writeFile(resolve(run, 'after-semantic.png'), Buffer.from(semanticImage.images[0].data, 'base64'));
+  await writeFile(oracle + '.control', 'background');
+  await waitFor(a => a.sentinel_hwnd !== 0 && a.foreground_hwnd === a.sentinel_hwnd, 'foreground sentinel');
+  const backgroundState = await semantic.observe((await semantic.listWindows()).find(w => w.title.startsWith('Computer Use Fixture ')), { screenshot: false, accessibility: true });
+  const beforeBackground = await snapshot();
+  const backgroundInvoke = await semantic.act(backgroundState.id, { kind: 'invoke', element_id: element(backgroundState, 'Fixture Increment').id });
+  assert.equal(backgroundInvoke.state, 'dispatched', backgroundInvoke.message);
+  const afterBackground = await waitFor(a => a.count === beforeBackground.count + 1, 'background UIA invoke');
+  unchangedPointer(beforeBackground, afterBackground, false);
+  const foregroundChanged = beforeBackground.foreground_hwnd !== afterBackground.foreground_hwnd;
+  outcomes.push({ name: 'Background UIA provider activation observation', passed: true, foreground_changed: foregroundChanged, before: beforeBackground.foreground_hwnd, after: afterBackground.foreground_hwnd });
+  record(`Background UIA invoke preserves pointer; provider foreground_changed=${foregroundChanged} (not input isolation)`);
+  await semantic.stop();
+  process.env.CU_TEST_REAL_HELPER = helperPath;
+  let semanticLoss;
+  try { semanticLoss = new Computer({ helperPath: proxyPath, policyPath, timeoutMs: 2500 }); }
+  finally { delete process.env.CU_TEST_REAL_HELPER; }
+  runtimes.push(semanticLoss); await semanticLoss.start();
+  const semanticLossState = await semanticLoss.observe((await semanticLoss.listWindows()).find(w => w.title.startsWith('Computer Use Fixture ')), { screenshot: false, accessibility: true });
+  const beforeSemanticLoss = await snapshot();
+  await assert.rejects(semanticLoss.act(semanticLossState.id, { kind: 'invoke', element_id: element(semanticLossState, 'Fixture Increment').id }, 'lost-semantic-response'), error => error instanceof UnknownExecutionError);
+  await waitFor(a => a.count === beforeSemanticLoss.count + 1, 'semantic invoke despite lost response');
+  assert.equal((await semanticLoss.actionStatus('lost-semantic-response')).mechanism, 'uia-invoke');
+  await sleep(300); assert.equal((await snapshot()).count, beforeSemanticLoss.count + 1);
+  assert.equal((await snapshot()).mouse_messages, beforeSemanticLoss.mouse_messages);
+  await semanticLoss.stop();
+  record('Lost real UIA response is unknown to caller, no mouse fallback and no replay');
+  const legacy = new HelperTransport({ helperPath, policyPath });
+  try {
+    const caps = await legacy.request('capabilities'); assert.equal(caps.protocol_version, 2); assert.ok(!caps.actions.includes('invoke'));
+    const { session_id } = await legacy.request('start');
+    const window = (await legacy.request('list_windows', { session_id })).find(w => w.title.startsWith('Computer Use Fixture '));
+    const state = await legacy.request('observe', { session_id, window, screenshot: false, accessibility: true });
+    assert.ok(state.elements.every(e => !Object.hasOwn(e, 'capabilities')));
+    await assert.rejects(legacy.request('act', { session_id, observation_id: state.id, action_id: 'v1-semantic-denied', action: { kind: 'invoke', element_id: element(state, 'Fixture Increment').id } }), error => error.code === 'unsupported_action');
+    await legacy.request('stop', { session_id });
+  } finally { await legacy.close(); }
+  record('Legacy profile 1 omits new fields/actions and rejects semantic dispatch');
+  const activation = new Computer({ helperPath, policyPath }); runtimes.push(activation);
+  await activation.start();
+  for (const maximized of [true, false]) {
+    await writeFile(oracle + '.control', maximized ? 'maximize-background' : 'normal-background');
+    await waitFor(a => a.maximized === maximized && a.foreground_hwnd === a.sentinel_hwnd, 'background fixture geometry');
+    const window = (await activation.listWindows()).find(w => w.title.startsWith('Computer Use Fixture '));
+    await activation.activateWindow(window);
+    assert.deepEqual((await activation.listWindows()).find(w => w.id === window.id).bounds, window.bounds);
+    await writeFile(oracle + '.control', maximized ? 'maximize-background' : 'normal-background');
+    await waitFor(a => a.maximized === maximized && a.foreground_hwnd === a.sentinel_hwnd, 'background fixture before physical input');
+    const state = await activation.observe(window, { screenshot: false, accessibility: true });
+    const result = await activation.act(state.id, { kind: 'key', keys: ['Tab'] });
+    assert.equal(result.state, 'dispatched', result.message);
+    assert.deepEqual((await activation.listWindows()).find(w => w.id === window.id).bounds, window.bounds);
+    await waitFor(a => a.maximized === maximized && a.foreground_hwnd === Number(window.id), 'activated fixture geometry');
+  }
+  record('Explicit activation and physical input preserve maximized and normal window geometry');
+  await writeFile(oracle + '.control', 'untitled');
+  let untitled;
+  for (let i = 0; i < 50; i++) {
+    const sentinelId = String((await snapshot()).sentinel_hwnd);
+    untitled = (await activation.listWindows()).find(w => w.id === sentinelId && w.title === '');
+    if (untitled) break;
+    await sleep(100);
+  }
+  assert.ok(untitled, 'Approved untitled popup must remain discoverable');
+  const popup = await activation.observe(untitled, { screenshot: true, accessibility: true });
+  assert.equal(popup.window.id, untitled.id);
+  await writeFile(resolve(run, 'untitled-popup.png'), Buffer.from(popup.images[0].data, 'base64'));
+  record('Untitled approved windows are listed and observable');
+  await activation.stop();
   await writeFile(resolve(run, 'results.json'), JSON.stringify({ platform: process.platform, scope: 'Windows interactive fixture only', outcomes, screenshot: resolve(run, 'window.png') }, null, 2));
   console.log(`GUI evidence: ${run}`);
 } finally {

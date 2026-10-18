@@ -42,6 +42,11 @@ enum Probe {
     Prepare {
         window: Window,
     },
+    Semantic {
+        window: Window,
+        action: Box<cu_core::NativeAction>,
+        execute: bool,
+    },
     Activate {
         window: Window,
     },
@@ -52,7 +57,7 @@ fn output(response: &Response) {
     let mut stdout = io::stdout().lock();
     if bytes.len() > MAX_FRAME {
         let fallback = Response {
-            version: VERSION,
+            version: response.version,
             id: response.id.clone(),
             result: None,
             error: Some(Error::new(
@@ -193,6 +198,19 @@ fn probe_main() -> Result<()> {
             Probe::Prepare { window } => {
                 backend().prepare(&window).map(|_| json!({"prepared":true}))
             }
+            Probe::Semantic {
+                window,
+                action,
+                execute,
+            } => backend().preflight(&window, &action).and_then(|_| {
+                if execute {
+                    backend()
+                        .perform(&window, &action, &cancel)
+                        .map(|v| json!(v))
+                } else {
+                    Ok(json!({"prepared":true}))
+                }
+            }),
             Probe::Activate { window } => backend()
                 .activate_window(&window, &cancel)
                 .map(|_| json!({"activated":true})),
@@ -248,9 +266,19 @@ impl Runtime {
         }
         Ok(session)
     }
-    fn handle(&mut self, command: Command) -> Result<Value> {
+    fn handle(&mut self, command: Command, version: u32) -> Result<Value> {
         match command {
-            Command::Capabilities {} => Ok(json!(backend().capabilities())),
+            Command::Capabilities {} => {
+                let mut caps = backend().capabilities();
+                caps.protocol_version = MAX_VERSION;
+                if version == VERSION {
+                    caps.actions.retain(|a| {
+                        !(["invoke", "toggle", "select"].contains(&a.as_str())
+                            || cfg!(windows) && a == "set_value")
+                    });
+                }
+                Ok(json!(caps))
+            }
             Command::Start {} => {
                 if self.started {
                     return Err(Error::new(
@@ -427,6 +455,11 @@ impl Runtime {
                 )?)
                 .map_err(|e| Error::new("worker_failed", e.to_string()))?;
                 observation.helper_epoch = self.epoch.clone();
+                if version == VERSION {
+                    for element in &mut observation.elements {
+                        element.capabilities = None;
+                    }
+                }
                 if observation.window != window {
                     return Err(Error::new(
                         "stale_window",
@@ -442,6 +475,17 @@ impl Runtime {
                 observation_id,
                 action,
             } => {
+                if version == VERSION
+                    && (matches!(
+                        action,
+                        Action::Invoke { .. } | Action::Toggle { .. } | Action::Select { .. }
+                    ) || cfg!(windows) && matches!(action, Action::SetValue { .. }))
+                {
+                    return Err(Error::new(
+                        "unsupported_action",
+                        "Windows semantic actions require protocol profile 2",
+                    ));
+                }
                 if action_id.is_empty() || action_id.len() > 128 {
                     return Err(Error::new(
                         "invalid_params",
@@ -503,6 +547,9 @@ impl Runtime {
                             target: Target::Element { .. },
                             ..
                         } | Action::SetValue { .. }
+                            | Action::Invoke { .. }
+                            | Action::Toggle { .. }
+                            | Action::Select { .. }
                             | Action::Scroll {
                                 target: Target::Element { .. },
                                 ..
@@ -542,6 +589,16 @@ impl Runtime {
                             }
                         }
                     }
+                    if matches!(native, cu_core::NativeAction::Semantic { .. }) {
+                        query(
+                            Probe::Semantic {
+                                window: observation.window.clone(),
+                                action: Box::new(native.clone()),
+                                execute: false,
+                            },
+                            &self.cancel,
+                        )?;
+                    }
                     cancelled(&self.cancel)?;
                     let provisional = ActionOutcome {
                         action_id: action_id.clone(),
@@ -555,13 +612,32 @@ impl Runtime {
                     session
                         .actions
                         .insert(action_id.clone(), (fingerprint.clone(), provisional));
-                    let result = query(
-                        Probe::Prepare {
-                            window: observation.window.clone(),
-                        },
-                        &self.cancel,
-                    )
-                    .and_then(|_| backend().perform(&observation.window, &native, &self.cancel));
+                    let result = if matches!(native, cu_core::NativeAction::Semantic { .. }) {
+                        query(
+                            Probe::Semantic {
+                                window: observation.window.clone(),
+                                action: Box::new(native),
+                                execute: true,
+                            },
+                            &self.cancel,
+                        )
+                        .and_then(|v| {
+                            serde_json::from_value::<String>(v)
+                                .map_err(|e| Error::new("worker_failed", e.to_string()))
+                        })
+                    } else {
+                        query(
+                            Probe::Prepare {
+                                window: observation.window.clone(),
+                            },
+                            &self.cancel,
+                        )
+                        .and_then(|_| backend().perform(&observation.window, &native, &self.cancel))
+                    }
+                    .and_then(|mechanism| {
+                        cancelled(&self.cancel)?;
+                        Ok(mechanism)
+                    });
                     Ok(match result {
                         Ok(mechanism)=>ActionOutcome{action_id:action_id.clone(),helper_epoch:epoch.clone(),state:ActionState::Dispatched,mechanism,message:"OS accepted the operation; re-observe to verify the application result".into()},
                         Err(e)=>ActionOutcome{action_id:action_id.clone(),helper_epoch:epoch.clone(),state:ActionState::Unknown,mechanism:"native".into(),message:format!("{}; do not replay this action automatically",e)},
@@ -633,7 +709,10 @@ fn action_elements(action: &Action) -> Vec<&str> {
             add(&mut out, from);
             add(&mut out, to);
         }
-        Action::SetValue { element_id, .. } => out.push(element_id.as_str()),
+        Action::SetValue { element_id, .. }
+        | Action::Invoke { element_id }
+        | Action::Toggle { element_id }
+        | Action::Select { element_id } => out.push(element_id.as_str()),
         _ => {}
     }
     out
@@ -696,10 +775,10 @@ fn run() -> Result<()> {
                     Ok(request) => {
                         if request.id.is_empty()
                             || request.id.len() > 128
-                            || request.version != VERSION
+                            || !(VERSION..=MAX_VERSION).contains(&request.version)
                         {
                             output(&Response {
-                                version: VERSION,
+                                version: request.version,
                                 id: request.id,
                                 result: None,
                                 error: Some(Error::new(
@@ -715,7 +794,7 @@ fn run() -> Result<()> {
                         if let Err(mpsc::TrySendError::Full(request)) = tx.try_send(request) {
                             reader_cancel.store(true, Ordering::SeqCst);
                             output(&Response {
-                                version: VERSION,
+                                version: request.version,
                                 id: request.id,
                                 result: None,
                                 error: Some(Error::new(
@@ -760,16 +839,16 @@ fn run() -> Result<()> {
     loop {
         match rx.recv_timeout(Duration::from_millis(50)) {
             Ok(request) => {
-                let result = runtime.handle(request.command);
+                let result = runtime.handle(request.command, request.version);
                 let response = match result {
                     Ok(value) => Response {
-                        version: VERSION,
+                        version: request.version,
                         id: request.id,
                         result: Some(value),
                         error: None,
                     },
                     Err(error) => Response {
-                        version: VERSION,
+                        version: request.version,
                         id: request.id,
                         result: None,
                         error: Some(error),

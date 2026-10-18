@@ -28,7 +28,8 @@
 - 取消可能发生在部分输入后。unknown/UnknownExecutionError 必须先核对现场，不自动再点击、再提交或重发文本。
 - 同一 helper 的 action_status 可核对仍保留的日志；stop 后日志释放，重启后不能靠相同 action_id 恢复去重。
 - 正常取消释放项目持有的键鼠，不承诺撤回操作；强杀、崩溃、机器断电不能保证 cleanup。
-- Windows/macOS 拒绝检测到的用户物理 modifier；任何平台上运行 GUI 测试时都应暂停人工操作。输入注入不是与人类输入隔离的专用通道。
+- Windows 物理输入/macOS 拒绝检测到的用户物理 modifier；Windows semantic UIA 不经物理输入路径，但 provider 仍可能改变前台/焦点。任何平台上运行 GUI 测试时都应暂停人工操作。输入注入不是与人类输入隔离的专用通道；不移动 cursor 也不等于完全不影响用户。
+- UIA semantic action 先做无副作用的 pattern 预检，投递开始后发生取消/超时/失联均为 unknown；不能自动切换到 SendInput。WGC 不含 cursor 与系统 cursor 隐藏是不同概念，本项目不修改全局 cursor。
 
 ## 不支持
 

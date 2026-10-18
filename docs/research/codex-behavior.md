@@ -40,6 +40,14 @@
 4. **授权**：宿主 policy 默认拒绝，截图、辅助功能和输入分离；窗口数据不扩大授权。文件锁阻止多个 helper 同时控制同一用户桌面。
 5. **隐私**：密码元素不读值；树、截图、输入文本不默认写诊断日志；没有任意 shell/JS 执行工具。
 
+## Windows semantic 独立实现（2026-10-18）
+
+本项目新增 v2 UIA Invoke/Toggle/SelectionItem/ValuePattern 执行和 element capabilities；旧 click 继续物理输入。不据此声称 Codex 是 semantic-first 或使用相同 fallback 顺序。安装版 PE 的 UIA、SendInput、SetCursorPos、foreground API imports 和 cursor suppress/restore 字符串只能证明线索存在，不能证明调用顺序或 cursor 生命周期。
+
+本次复核了既有 PE 静态报告及 REA 6.5.0 provider 列表；没有取得函数级 cursor xref 证据，因此 cursor guard 研究门为 **No-Go**。未安装大型反编译器、未运行目标 helper、未注入，未新增全局 cursor 隐藏。没有 CreateDesktop/SwitchDesktop import 不能证明所有间接调用均不存在，也不能据此宣称 Codex 是独立 desktop。
+
+真实自建 fixture 证明：四种 UIA 动作改变目标状态、cursor 坐标不变、没有鼠标输入消息；SetValue 没有键盘输入消息。后台 Invoke 时，WinForms/UIA provider 会改变 foreground，即使本项目没有显式激活。因此当前交付不是“完全不抢用户输入”的实现，不承诺任意应用后台语义动作。焦点/选区/文档上下文仍未实现，fixture focus oracle 不等于生产 observation 字段。
+
 ## 当前实现边界
 
-Windows 自建 fixture 的 SDK/MCP 真实闭环已验证，但测试此前由 host 预先 spawn fixture 并按 PID 授权，**不覆盖 Codex 式冷启动**。Linux 仅有交叉编译检查，macOS 未在原生环境编译/运行。缺少证据的 Codex 原生行为保持 unknown，不用静态文件名推断完整实现。
+Windows 自建 fixture 的 SDK/MCP 真实闭环、helper 固定 profile 冷启动、v2 UIA semantic 路径均已验证；不代表 WPS 或任意应用通过验收。Linux 本地仍仅有交叉编译检查，macOS/Linux hosted CI build 不替代原生 GUI。缺少证据的 Codex 原生行为保持 unknown，不用静态文件名推断完整实现。

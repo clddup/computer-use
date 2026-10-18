@@ -48,6 +48,63 @@
         {
           "type": "object",
           "required": [
+            "element_id",
+            "kind"
+          ],
+          "properties": {
+            "element_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "invoke"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "element_id",
+            "kind"
+          ],
+          "properties": {
+            "element_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "toggle"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "element_id",
+            "kind"
+          ],
+          "properties": {
+            "element_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "select"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
             "button",
             "kind",
             "target"
@@ -680,6 +737,15 @@
               "type": "null"
             }
           ]
+        },
+        "capabilities": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         },
         "depth": {
           "type": "integer",

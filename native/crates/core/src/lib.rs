@@ -103,6 +103,11 @@ impl Policy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NativeAction {
+    Semantic {
+        element: Element,
+        operation: SemanticOperation,
+        value: Option<String>,
+    },
     Click {
         x: f64,
         y: f64,
@@ -132,6 +137,58 @@ pub enum NativeAction {
         locator: String,
         value: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticOperation {
+    Invoke,
+    Toggle,
+    Select,
+    SetValue,
+}
+impl SemanticOperation {
+    pub fn capability(self) -> &'static str {
+        match self {
+            Self::Invoke => "invoke",
+            Self::Toggle => "toggle",
+            Self::Select => "select",
+            Self::SetValue => "set_value",
+        }
+    }
+}
+fn semantic_action(
+    observation: &Observation,
+    element_id: &str,
+    operation: SemanticOperation,
+    value: Option<String>,
+) -> Result<NativeAction> {
+    let element = observation
+        .elements
+        .iter()
+        .find(|e| e.id == element_id)
+        .ok_or_else(|| Error::new("stale_reference", "Unknown element"))?;
+    resolve_target(
+        observation,
+        &Target::Element {
+            element_id: element_id.into(),
+        },
+    )?;
+    if !element
+        .capabilities
+        .as_ref()
+        .is_some_and(|c| c.iter().any(|s| s == operation.capability()))
+    {
+        return Err(Error::new(
+            "unsupported_action",
+            "Element does not advertise the requested semantic capability",
+        ));
+    }
+    Ok(NativeAction::Semantic {
+        element: element.clone(),
+        operation,
+        value,
+    })
 }
 
 pub fn resolve_target(observation: &Observation, target: &Target) -> Result<(f64, f64)> {
@@ -195,6 +252,15 @@ pub fn resolve_target(observation: &Observation, target: &Target) -> Result<(f64
 }
 pub fn resolve_action(observation: &Observation, action: &Action) -> Result<NativeAction> {
     Ok(match action {
+        Action::Invoke { element_id } => {
+            semantic_action(observation, element_id, SemanticOperation::Invoke, None)?
+        }
+        Action::Toggle { element_id } => {
+            semantic_action(observation, element_id, SemanticOperation::Toggle, None)?
+        }
+        Action::Select { element_id } => {
+            semantic_action(observation, element_id, SemanticOperation::Select, None)?
+        }
         Action::Click {
             target,
             button,
@@ -276,6 +342,14 @@ pub fn resolve_action(observation: &Observation, action: &Action) -> Result<Nati
                     "Element is not a non-password editor",
                 ));
             }
+            if element.capabilities.is_some() {
+                return semantic_action(
+                    observation,
+                    element_id,
+                    SemanticOperation::SetValue,
+                    Some(value.clone()),
+                );
+            }
             NativeAction::SetValue {
                 locator: element.locator.clone(),
                 value: value.clone(),
@@ -323,6 +397,12 @@ pub trait Backend {
     fn validate(&self, window: &Window) -> Result<()>;
     fn prepare(&self, window: &Window) -> Result<()> {
         self.validate(window)
+    }
+    fn preflight(&self, _window: &Window, _action: &NativeAction) -> Result<()> {
+        Err(Error::new(
+            "unsupported_action",
+            "Semantic actions are not implemented on this backend",
+        ))
     }
     fn perform(
         &self,
@@ -531,6 +611,7 @@ mod tests {
             password: true,
             depth: 1,
             locator: "root/0".into(),
+            capabilities: None,
         });
         assert!(resolve_target(
             &observation,
@@ -571,6 +652,71 @@ mod tests {
         assert!(png_base64(0, 1, &[]).is_err());
         assert!(png_base64(1, 1, &[0; 3]).is_err());
         assert!(png_base64(5000, 5000, &[]).is_err());
+    }
+    #[test]
+    fn semantic_actions_require_capabilities_and_retain_identity() {
+        let mut observation = obs();
+        let element = Element {
+            id: "e".into(),
+            role: "button".into(),
+            name: "Fixture".into(),
+            value: None,
+            bounds: Some(Rect {
+                x: -400.0,
+                y: 40.0,
+                width: 100.0,
+                height: 20.0,
+            }),
+            editable: true,
+            password: false,
+            depth: 1,
+            locator: "root/0".into(),
+            capabilities: None,
+        };
+        observation.elements.push(element);
+        let actions = [
+            Action::Invoke {
+                element_id: "e".into(),
+            },
+            Action::Toggle {
+                element_id: "e".into(),
+            },
+            Action::Select {
+                element_id: "e".into(),
+            },
+            Action::SetValue {
+                element_id: "e".into(),
+                value: "replacement".into(),
+            },
+        ];
+        for action in &actions[..3] {
+            assert_eq!(
+                resolve_action(&observation, action).unwrap_err().code,
+                "unsupported_action"
+            );
+        }
+        observation.elements[0].capabilities = Some(vec![
+            "invoke".into(),
+            "toggle".into(),
+            "select".into(),
+            "set_value".into(),
+        ]);
+        for action in &actions {
+            match resolve_action(&observation, action).unwrap() {
+                NativeAction::Semantic { element, .. } => {
+                    assert_eq!(element.locator, "root/0");
+                    assert_eq!(element.name, "Fixture");
+                }
+                _ => panic!("Semantic intent lost"),
+            }
+        }
+        observation.elements[0].password = true;
+        for action in &actions {
+            assert!(resolve_action(&observation, action).is_err());
+        }
+        observation.elements[0].password = false;
+        observation.elements[0].bounds = None;
+        assert!(resolve_action(&observation, &actions[0]).is_err());
     }
     #[test]
     fn invalid_scroll() {

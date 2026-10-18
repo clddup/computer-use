@@ -87,6 +87,12 @@ mod implementation {
             action: &NativeAction,
             cancel: &AtomicBool,
         ) -> Result<String> {
+            if matches!(action, NativeAction::Semantic { .. }) {
+                return Err(Error::new(
+                    "unsupported_action",
+                    "UIA semantic actions are Windows-only",
+                ));
+            }
             let input = CString::new(json!({"window":window,"action":action}).to_string())
                 .map_err(|e| Error::new("invalid_params", e.to_string()))?;
             unsafe {

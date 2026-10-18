@@ -2,7 +2,7 @@
 
 | 平台 | 真实实现 | 本轮验证 | 限制 |
 | --- | --- | --- | --- |
-| Windows | Win32/DWM、UI Automation、WGC、SendInput；固定 host-approved app profile 的直接启动与窗口 readiness | Windows 11 build 26200 编译、单测、SDK/MCP 自建 GUI 实测及 debug/release 冷启动实测 | 可见普通完整性窗口；无 set_value，不控制 UAC/安全桌面 |
+| Windows | Win32/DWM、UI Automation、WGC、SendInput；固定 host-approved app profile 的直接启动与窗口 readiness | Windows 11 build 26200 编译、单测、SDK/MCP 自建 GUI 实测及 debug/release 冷启动实测 | 可见普通完整性窗口；v2 UIA Invoke/Toggle/Select/SetValue 实测，不控制 UAC/安全桌面 |
 | macOS | AX、ScreenCaptureKit 单帧、CoreGraphics，Swift C ABI bridge | **未在 macOS 编译或 GUI 实测** | macOS 14+；需 AX/屏幕录制权限，窗口 AX 几何关联必须唯一 |
 | Linux | X11/EWMH、XTEST、AT-SPI D-Bus、root screen-region PNG | aarch64-unknown-linux-gnu cargo check 通过，**未链接/GUI 实测** | 仅 X11；无 native Wayland；截图可能含遮挡物，Unicode 使用 EditableText |
 
@@ -14,7 +14,7 @@ Windows 目前是唯一实现并验收了 app discovery/launch 生命周期的�
 
 安装 Rust MSVC 工具链及 Visual Studio C++ Build Tools；构建 `native/Cargo.toml`。使用 Per-Monitor V2 DPI、进程创建时间身份、DWM frame 几何。WGC 使用真实窗口捕获，不暗中回退 GDI。实际帧尺寸与窗口几何不匹配时拒绝，避免错误坐标注入。
 
-输入需要目标前台窗口；遮挡检查与动作前重验证仍不能消除所有异步窗口切换竞态。UIA 调用在可终止查询子进程内。自建 fixture 的 125% 缩放截图与坐标点击已在本机实测，不代表所有 DPI/多屏组合已覆盖。
+物理输入需要目标前台窗口；遮挡检查与动作前重验证仍不能消除所有异步窗口切换竞态。v2 UIA semantic action 不注入鼠标/键盘、不显式激活窗口，但 provider 可以改变前台或焦点；后台 WinForms Invoke 已实测抢前台，不能称为虚拟鼠标或输入隔离。UIA 调用在可终止子进程内。WGC `WithoutCursor` 仅排除截图光标，不隐藏系统 cursor。自建 fixture 的 125% 缩放截图与坐标点击已在本机实测，不代表所有 DPI/多屏组合已覆盖。
 
 发布构建：`cargo build --manifest-path native/Cargo.toml --release --locked`。helper 在 `native/target/release/cu-helper.exe`；TS 使用 `--helper` 显式绝对路径。
 

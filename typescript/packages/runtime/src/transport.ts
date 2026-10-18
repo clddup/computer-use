@@ -26,6 +26,7 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
   actionId?: string;
   inputAction: boolean;
+  version: number;
 }
 export class HelperTransport {
   private readonly child: ChildProcessWithoutNullStreams;
@@ -48,11 +49,20 @@ export class HelperTransport {
     this.child.stdin.on('error', error => this.fail(error));
     this.child.once('close', () => this.fail(new ComputerUseError('helper_closed', 'Helper closed; unresolved input is unknown')));
   }
+  private version = VERSION;
+  private negotiation?: Promise<void>;
+  negotiate(): Promise<void> {
+    return this.negotiation ??= (async () => {
+      const caps = assertWire<{ protocol_version: number }>('Capabilities', await this.request('capabilities'));
+      if (caps.protocol_version >= 2) this.version = 2;
+    })();
+  }
   request(method: string, params: unknown = {}, timeoutMs = this.options.timeoutMs ?? 45_000): Promise<unknown> {
     if (this.ended || this.closing) return Promise.reject(new ComputerUseError('helper_closed', 'Helper is not accepting requests'));
     if (this.pending.size >= 32) return Promise.reject(new ComputerUseError('queue_limit', 'Too many pending requests'));
     const id = randomUUID();
-    const request = { version: VERSION, id, command: { method, params } };
+    const version = this.version;
+    const request = { version, id, command: { method, params } };
     try { assertWire('Request', request); } catch (error) { return Promise.reject(error); }
     const bytes = Buffer.from(JSON.stringify(request) + '\n');
     if (bytes.length > MAX_FRAME) return Promise.reject(new ComputerUseError('frame_limit', 'Request exceeds frame limit'));
@@ -71,7 +81,7 @@ export class HelperTransport {
           ? new UnknownExecutionError(`${method} response timed out. Do not replay; re-list and re-observe first.`, actionId)
           : new ComputerUseError('timeout', `Helper ${method} timed out`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, actionId, inputAction: sideEffect });
+      this.pending.set(id, { resolve, reject, timer, actionId, inputAction: sideEffect, version });
       this.child.stdin.write(bytes, error => { if (error) this.fail(error); });
     });
   }
@@ -83,9 +93,10 @@ export class HelperTransport {
       const line = this.buffer.subarray(0, end); this.buffer = this.buffer.subarray(end + 1);
       try {
         const response = assertWire<Response>('Response', JSON.parse(line.toString('utf8')));
-        if (response.version !== VERSION || (response.result === null) === (response.error === null)) throw new Error('Invalid response envelope');
+        if (![1, 2].includes(response.version) || (response.result === null) === (response.error === null)) throw new Error('Invalid response envelope');
         const pending = this.pending.get(response.id);
-        if (!pending) continue; // Late responses never trigger a retry.
+        if (!pending) continue; // Late responses never trigger a retry, including an older negotiated profile.
+        if (response.version !== pending.version) throw new Error('Response version differs from request');
         clearTimeout(pending.timer); this.pending.delete(response.id);
         if (response.error) pending.reject(new ComputerUseError(response.error.code, response.error.message, response.error.may_have_executed));
         else pending.resolve(response.result);

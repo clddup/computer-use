@@ -1,6 +1,28 @@
 # 实际验证记录
 
-日期：2026-10-17。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+日期：2026-10-19（含 2026-10-17/18 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+
+## 2026-10-19 窗口激活与 WPS 实测
+
+- 移除激活过程中的无条件 `SW_RESTORE` 及 `SwitchToThisWindow`；保持普通/最大化窗口状态，已最小化窗口仍按现有契约拒绝。物理输入在激活之后再次验证进程身份和窗口几何，拒绝使用已变化的旧坐标。
+- Windows 枚举保留可见、非最小化、有有效 bounds 的无标题窗口；helper 的授权进程过滤不变，修复 WPS 独立新建弹层被漏掉的问题。
+- 新增真实 fixture 回归：后台普通/最大化窗口的显式激活和物理键盘输入均不改变 bounds；无标题窗口可枚举和截图观察。debug `.local/windows-gui-gx6mm1/`、release `.local/windows-gui-Nf509E/` 均 **26** 组通过。
+- release 首轮在读取 fixture 正在写入的 oracle 文件时读到空内容，脚本失败；加入有界读取重试后重跑通过，不计首轮为成功。
+- Rust **13** 项、fmt、clippy `-D warnings`、debug/release build 通过；TypeScript 四包构建、协议漂移、typecheck、**19** 项测试通过。冷启动 debug `.local/windows-cold-start-hMNR46/`、release `.local/windows-cold-start-pg8yK2/` 通过。
+- 用户授权的 WPS 实测经本项目 SDK/helper 启动和操作：观察无标题新建弹层，UIA Invoke“文字”，图像坐标点击“新建空白”，物理 Unicode 输入标题和四段示例自我介绍；截图核实正文，WPS 状态栏字数 362。新文档保持未保存，会话已停止。此演示先于激活尺寸修复，不冒充修复后 WPS 回归；修复后通过的是自建 fixture。未读取已有文档正文、未保存/上传，个人应用截图仅留本地，不随源码发布。
+
+## 2026-10-18 Windows semantic 增量验收
+
+- Rust **13** 项测试（core 10、helper 3）、Windows workspace clippy `-D warnings`、debug/release build 通过；Linux aarch64 cross-check 通过。
+- TypeScript tsdown/Rolldown、协议漂移、no-emit typecheck、**19** 项 Vitest 通过，新增版本协商和 semantic wire 样例。
+- GUI debug `.local/windows-gui-G0mxd4/`、release `.local/windows-gui-suYOge/`：保留原 16 组，另验证 UIA invoke/toggle/select/set_value、无 pattern 拒绝及显式物理 click、后台 provider 行为、UIA 响应丢失、旧 v1 profile；共 **24** 个通过组，results 另含一条 foreground 观测记录。
+- 冷启动 debug `.local/windows-cold-start-A3hYzA/`、release `.local/windows-cold-start-qMU4iq/` 通过；目标仍由 helper 启动，不以 host 预启动冒充。
+- 四种 UIA action 均验证状态变化、真实 mechanism、鼠标坐标不变、无鼠标消息、action_id 去重；SetValue 验证无键盘消息。官方 MCP client 也执行真实 UIA invoke。
+- fixture 增加 cursor physical coordinates/visibility、foreground HWND/PID、active control、鼠标/键盘消息累计计数，短点击不只靠 100ms mouse_down 快照。结果通道不执行生产输入；新增 background 控制仅创建测试前台 sentinel。
+- **实测限制**：后台 WinForms Invoke 会由 UIA/provider 改变 foreground；首次要求“前台必定不变”的测试失败，保留为限制并改为记录 provider 行为，未通过伪造结果掩盖。cursor 不动不等于用户输入完全隔离。
+- debug 初始及输入后 PNG 已打开查看，显示 Count 2、Hello 中文、滚动变化和密码掩码；WGC 不画 cursor 不等于系统 cursor 被隐藏。
+- **仍待补验**：真实阻塞 UIA provider 的 stop/EOF/TTL/12 秒超时故障注入。当前 worker 取消路径已实现，旧物理输入 stop/EOF/TTL 与 UIA 响应丢失通过，但不能据此冒充所有 semantic 阻塞场景实测完成。焦点/选区/文档 production observation 仍未实现。
+- 本次未运行 Codex 私有 helper、未新增 cursor hide/虚拟 desktop、未修改全局配置、未提交/推送。下面表格为此前基线记录。
 
 ## 环境
 

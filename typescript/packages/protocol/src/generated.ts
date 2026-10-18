@@ -2,6 +2,18 @@
 
 export type Action =
   | {
+      element_id: string;
+      kind: "invoke";
+    }
+  | {
+      element_id: string;
+      kind: "toggle";
+    }
+  | {
+      element_id: string;
+      kind: "select";
+    }
+  | {
       button: Button;
       click_count?: number;
       kind: "click";
@@ -184,6 +196,7 @@ export interface Observation {
 }
 export interface Element {
   bounds?: Rect | null;
+  capabilities?: string[] | null;
   depth: number;
   editable: boolean;
   id: string;

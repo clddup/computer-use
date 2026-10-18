@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
+pub const MAX_VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -110,6 +111,8 @@ pub struct Element {
     pub password: bool,
     pub depth: u32,
     pub locator: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -147,6 +150,15 @@ pub enum Target {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
+    Invoke {
+        element_id: String,
+    },
+    Toggle {
+        element_id: String,
+    },
+    Select {
+        element_id: String,
+    },
     Click {
         target: Target,
         button: Button,

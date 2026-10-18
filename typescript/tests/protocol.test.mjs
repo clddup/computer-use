@@ -11,9 +11,11 @@ const samples = [
   request('capabilities'), request('start'), request('list_windows', { session_id: 's' }),
   request('observe', { session_id: 's', window, screenshot: true, accessibility: false }),
   request('act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind: 'type_text', text: '中文' } }),
+  ...['invoke', 'toggle', 'select', 'set_value'].map(kind => ({ ...request('act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind, element_id: 'element', ...(kind === 'set_value' ? { value: 'replacement' } : {}) } }), version: 2 })),
   request('action_status', { session_id: 's', action_id: 'a' }), request('stop', { session_id: 's' }),
 ];
 const invalid = [
+  ...['invoke', 'toggle', 'select'].flatMap(kind => [request('act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind } }), request('act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind, element_id: 'e', locator: 'root/0' } })]),
   {}, { ...request('start'), extra: true }, request('start', { allowed_pids: [1] }),
   request('shell', { command: 'anything' }), request('list_windows'),
   request('observe', { session_id: 's', window: { ...window, pid: -1 }, screenshot: true, accessibility: true }),
