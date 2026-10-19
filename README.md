@@ -2,7 +2,7 @@
 
 独立的桌面自动化能力层，供其他 Agent 通过 **TypeScript SDK** 或 **MCP stdio** 接入。没有规划模型，不是 browser-use，不依赖 Codex/ZCode 的私有 helper 或 SDK，不提供任意 shell/JavaScript 执行工具。
 
-> **v0.1 验证边界（2026-10-17）**：Windows 自建窗口的 SDK/MCP 真实 GUI 闭环及中断测试通过；Linux 后端已通过 aarch64 编译检查，尚未链接或做 GUI 实测；macOS 有 AX/ScreenCaptureKit/CoreGraphics 实现，但尚未在 macOS 编译或运行。**不能将三平台源码齐备理解为三平台验收通过。** 详见 [验证记录](docs/verification.md)。
+> **v0.1 验证边界（2026-10-19）**：Windows 自建窗口的 SDK/MCP 真实 GUI 闭环及中断测试通过；macOS 在 Apple Silicon 本机 debug/release 各 20 组真实 AppKit fixture 验收通过，覆盖截图、Unicode 输入、SDK/MCP 和 stop/EOF/TTL 清理；Linux 尚未做真实桌面验收。**自建 fixture 通过不代表所有应用、多屏或三平台分发均已验收。** 详见 [验证记录](docs/verification.md)。
 
 ## 目录与边界
 
@@ -12,7 +12,7 @@ native/               独立 Rust Cargo workspace、平台后端和 cu-helper
 typescript/           独立 pnpm/TypeScript workspace
   packages/{protocol,runtime,sdk,mcp}
 protocol/schema.json  从 Rust 生成的共享协议规格
-scripts/              协议生成及真实 Windows E2E
+scripts/              协议生成及真实 Windows/macOS E2E
 tests/                自建无敏感 GUI fixture
 docs/                 架构、安全、平台、研究与验证记录
 skills/computer-use/  Agent 使用说明（不会自动安装到全局配置）

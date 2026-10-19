@@ -8,8 +8,13 @@ private func failure(_ code: String, _ message: String) -> BridgeError { BridgeE
 private func now() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
 private func identifier() -> String { UUID().uuidString }
 private func rect(_ value: CGRect) -> [String: Any] { ["x": value.origin.x, "y": value.origin.y, "width": value.width, "height": value.height] }
-private func bounds(_ value: [String: Any]) throws -> CGRect {
-    guard let b = value["bounds"] as? [String: Double], let x=b["x"], let y=b["y"], let w=b["width"], let h=b["height"] else { throw failure("invalid_window", "Missing window bounds") }
+func bounds(_ value: [String: Any]) throws -> CGRect {
+    guard let b = value["bounds"] as? [String: Any],
+          let nx=b["x"] as? NSNumber, let ny=b["y"] as? NSNumber,
+          let nw=b["width"] as? NSNumber, let nh=b["height"] as? NSNumber else { throw failure("invalid_window", "Missing window bounds") }
+    guard [nx,ny,nw,nh].allSatisfy({CFGetTypeID($0) != CFBooleanGetTypeID()}) else { throw failure("invalid_window", "Window bounds cannot contain booleans") }
+    let x=nx.doubleValue,y=ny.doubleValue,w=nw.doubleValue,h=nh.doubleValue
+    guard x.isFinite, y.isFinite, w.isFinite, h.isFinite, w>0, h>0 else { throw failure("invalid_window", "Window bounds must be finite and positive") }
     return CGRect(x:x,y:y,width:w,height:h)
 }
 private func windowID(_ value: [String: Any]) throws -> CGWindowID {
@@ -19,6 +24,12 @@ private func windowID(_ value: [String: Any]) throws -> CGWindowID {
 private func windowInfos() -> [[String: Any]] {
     CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 }
+func processIdentity(_ pid:Int32) -> String? {
+    var info=proc_bsdinfo()
+    let size=Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid,PROC_PIDTBSDINFO,0,&info,size)==size else { return nil }
+    return "\(pid):\(info.pbi_start_tvsec):\(info.pbi_start_tvusec)"
+}
 private func listWindows() -> [[String: Any]] {
     windowInfos().compactMap { info in
         guard (info[kCGWindowLayer as String] as? Int) == 0,
@@ -26,8 +37,8 @@ private func listWindows() -> [[String: Any]] {
               let id=info[kCGWindowNumber as String] as? UInt32,
               let data=info[kCGWindowBounds as String] as? [String:Any],
               let frame=CGRect(dictionaryRepresentation:data as CFDictionary), frame.width>0, frame.height>0,
-              let app=NSRunningApplication(processIdentifier:pid), let launch=app.launchDate else { return nil }
-        return ["id":String(id), "pid":pid, "process_identity":"\(pid):\(launch.timeIntervalSince1970)",
+              let identity=processIdentity(pid) else { return nil }
+        return ["id":String(id), "pid":pid, "process_identity":identity,
                 "title":info[kCGWindowName as String] as? String ?? "", "bounds":rect(frame)]
     }
 }
@@ -51,7 +62,7 @@ private func axBounds(_ element: AXUIElement) -> CGRect? {
     return CGRect(origin:point,size:size)
 }
 private func axWindow(_ window: [String: Any]) throws -> AXUIElement {
-    guard AXIsProcessTrusted() else { throw failure("permission_denied", "Accessibility permission must be granted by the user in System Settings") }
+    try requireAccessibility()
     guard let pid=window["pid"] as? Int32 else { throw failure("invalid_window", "Missing PID") }
     let app=AXUIElementCreateApplication(pid); AXUIElementSetMessagingTimeout(app,0.25)
     guard let windows=attribute(app,kAXWindowsAttribute) as? [AXUIElement] else { throw failure("accessibility_unavailable", "Application does not expose AX windows") }
@@ -82,36 +93,85 @@ private func tree(_ window: [String: Any]) throws -> [[String: Any]] {
     }
     return elements
 }
+private func requireAccessibility() throws {
+    guard AXIsProcessTrusted() else { throw failure("permission_denied", "Accessibility permission must be granted by the user in System Settings") }
+}
+private func isForeground(_ window: [String:Any]) throws -> Bool {
+    let id=try windowID(window)
+    guard let pid=window["pid"] as? Int32,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier==pid,
+          let first=windowInfos().first(where:{($0[kCGWindowLayer as String] as? Int)==0 && ($0[kCGWindowOwnerPID as String] as? Int32)==pid}) else { return false }
+    return (first[kCGWindowNumber as String] as? UInt32)==id
+}
+func captureSize(_ frame:CGRect) throws -> (Int,Int) {
+    let width=(frame.width*2).rounded(.up),height=(frame.height*2).rounded(.up)
+    guard width.isFinite,height.isFinite,width>=1,height>=1,width*height<=16_000_000 else {
+        throw failure("capture_limit", "Requested capture exceeds pixel limit")
+    }
+    return (Int(width),Int(height))
+}
+func boundedInteger(_ value:Double,_ minimum:Int,_ maximum:Int) throws -> Int {
+    guard value.isFinite,value>=Double(minimum),value<=Double(maximum),value.rounded()==value else {
+        throw failure("invalid_params", "Expected an integer within \(minimum)..\(maximum)")
+    }
+    return Int(value)
+}
+func pointerEvent(_ type:CGEventType,_ button:CGMouseButton,_ position:CGPoint,_ clickState:Int64=1) throws -> CGEvent {
+    guard let event=CGEvent(mouseEventSource:nil,mouseType:type,mouseCursorPosition:position,mouseButton:button) else {
+        throw failure("input_failed", "Cannot allocate pointer event")
+    }
+    event.setIntegerValueField(.mouseEventClickState,value:clickState)
+    return event
+}
 private func capture(_ window: [String: Any]) throws -> [String: Any] {
     guard CGPreflightScreenCaptureAccess() else { throw failure("permission_denied", "Screen Recording permission must be granted by the user") }
     let id=try windowID(window); let frame=try bounds(window)
+    let (pixelWidth,pixelHeight)=try captureSize(frame)
     let semaphore=DispatchSemaphore(value:0)
     let box=CaptureBox()
-    Task {
+    let task=Task {
         do {
             let content=try await SCShareableContent.excludingDesktopWindows(false,onScreenWindowsOnly:true)
             guard let target=content.windows.first(where:{$0.windowID==id}) else { throw failure("invalid_window", "Window is not capturable") }
+            try Task.checkCancellation()
             let filter=SCContentFilter(desktopIndependentWindow:target)
             let configuration=SCStreamConfiguration()
-            configuration.width=Int(frame.width*2); configuration.height=Int(frame.height*2)
+            configuration.width=pixelWidth; configuration.height=pixelHeight
             configuration.showsCursor=false
+            configuration.ignoreShadowsSingleWindow=true
+            configuration.scalesToFit=true
             let image=try await SCScreenshotManager.captureImage(contentFilter:filter,configuration:configuration)
+            try Task.checkCancellation()
             guard image.width*image.height<=16_000_000,
                   let data=NSBitmapImageRep(cgImage:image).representation(using:.png,properties:[:]),data.count<=9_000_000 else { throw failure("capture_limit", "Capture exceeds size limit") }
             box.result = .success(["id":identifier(),"mime_type":"image/png","data":data.base64EncodedString(),"width":image.width,"height":image.height,"screen_bounds":rect(frame),"capture_method":"screencapturekit"])
         } catch { box.result = .failure(error) }
         semaphore.signal()
     }
-    guard semaphore.wait(timeout:.now()+8) == .success, let result=box.result else { throw failure("capture_timeout", "ScreenCaptureKit timed out") }
+    guard semaphore.wait(timeout:.now()+8) == .success, let result=box.result else {
+        task.cancel()
+        throw failure("capture_timeout", "ScreenCaptureKit timed out")
+    }
     return try result.get()
 }
 private final class CaptureBox: @unchecked Sendable { var result: Result<[String:Any],Error>? }
 private func query(_ request: [String: Any]) throws -> Any {
     let method=request["method"] as? String ?? ""
+    if method=="permissions" {
+        let request=request["request"] as? Bool ?? false
+        let accessibility:Bool
+        if request {
+            let options=[kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String:true] as CFDictionary
+            accessibility=AXIsProcessTrustedWithOptions(options)
+        } else { accessibility=AXIsProcessTrusted() }
+        let screenRecording=CGPreflightScreenCaptureAccess()
+        if request && !screenRecording { _ = CGRequestScreenCaptureAccess() }
+        return ["accessibility":accessibility,"screen_recording":CGPreflightScreenCaptureAccess()]
+    }
     if method=="capabilities" {
         return ["protocol_version":1,"platform":"macos","backend":"ax-screencapturekit-coregraphics","available":AXIsProcessTrusted(),
                 "reason":AXIsProcessTrusted() ? NSNull() : "Accessibility permission is missing" as Any,
-                "actions":["click","type_text","key","scroll","drag"],"screenshot_methods":["screencapturekit"],
+                "actions":["activate_window","click","type_text","key","scroll","drag"],"screenshot_methods":["screencapturekit"],
                 "limitations":["macOS 14+; Accessibility and Screen Recording permissions are separate","Only visible windows with unambiguous AX association; no set_value","Input requires selected foreground window; no protected desktop"]]
     }
     if method=="list" { return listWindows() }
@@ -121,9 +181,15 @@ private func query(_ request: [String: Any]) throws -> Any {
     if method=="prepare" {
         let element=try axWindow(window)
         guard let pid=window["pid"] as? Int32, let app=NSRunningApplication(processIdentifier:pid) else { throw failure("invalid_window", "Application exited") }
-        guard app.activate(options:[.activateIgnoringOtherApps]) else { throw failure("focus_failed", "Could not activate target application") }
+        guard app.activate(options:[]) else { throw failure("focus_failed", "Could not activate target application") }
         guard AXUIElementPerformAction(element,kAXRaiseAction as CFString) == .success else { throw failure("focus_failed", "Could not raise target AX window") }
-        return true
+        let deadline=ProcessInfo.processInfo.systemUptime+1.5
+        repeat {
+            try validate(window)
+            if try isForeground(window) { return true }
+            RunLoop.current.run(until:Date().addingTimeInterval(0.01))
+        } while ProcessInfo.processInfo.systemUptime<deadline
+        throw failure("focus_failed", "Target window did not become foreground before the activation deadline")
     }
     if method=="observe" {
         let elements=(request["accessibility"] as? Bool ?? false) ? try tree(window) : []
@@ -139,15 +205,13 @@ private let keycodes:[String:CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"
 private func modifier(_ code:CGKeyCode)->CGEventFlags { switch code { case 55:return .maskCommand; case 56:return .maskShift;case 58:return .maskAlternate;case 59:return .maskControl;default:return [] } }
 private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancelled:@convention(c)(UnsafeRawPointer?)->Int32) throws -> String {
     guard let window=request["window"] as? [String:Any],let action=request["action"] as? [String:Any],let kind=action["kind"] as? String,
-          let pid=window["pid"] as? Int32 else { throw failure("invalid_params", "Missing input arguments") }
+          window["pid"] as? Int32 != nil else { throw failure("invalid_params", "Missing input arguments") }
     if kind=="set_value" { throw failure("unsupported_action", "Use focus and type_text on macOS") }
-    let id=try windowID(window)
     func check() throws {
-        try validate(window)
         if cancelled(context) != 0 { throw failure("cancelled", "Session stopped") }
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier==pid,
-              let first=windowInfos().first(where:{($0[kCGWindowLayer as String] as? Int)==0 && ($0[kCGWindowOwnerPID as String] as? Int32)==pid}),
-              (first[kCGWindowNumber as String] as? UInt32)==id else { throw failure("focus_changed", "Selected window is not foreground") }
+        try requireAccessibility()
+        try validate(window)
+        guard try isForeground(window) else { throw failure("focus_changed", "Selected window is not foreground") }
     }
     try check()
     let physical=CGEventSource.flagsState(.combinedSessionState)
@@ -159,9 +223,8 @@ private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancel
         if let text=text {let units=Array(text.utf16);units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength:units.count,unicodeString:$0.baseAddress!) }}
         event.post(tap:.cghidEventTap)
     }
-    func mouse(_ type:CGEventType,_ button:CGMouseButton,_ p:CGPoint) throws {
-        guard let event=CGEvent(mouseEventSource:nil,mouseType:type,mouseCursorPosition:p,mouseButton:button) else { throw failure("input_failed", "Cannot allocate pointer event") }
-        event.post(tap:.cghidEventTap)
+    func mouse(_ type:CGEventType,_ button:CGMouseButton,_ p:CGPoint,_ clickState:Int64=1) throws {
+        try pointerEvent(type,button,p,clickState).post(tap:.cghidEventTap)
     }
     defer {
         for code in heldKeys.reversed() { flags.subtract(modifier(code)); try? key(code,false) }
@@ -170,13 +233,19 @@ private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancel
     func move(_ x:Double,_ y:Double,_ dragged:Bool=false) throws {
         try check();let point=CGPoint(x:x,y:y)
         guard try bounds(window).contains(point) else { throw failure("out_of_bounds", "Pointer outside window") }
-        let hit=windowInfos().first { info in
-            guard (info[kCGWindowAlpha as String] as? Double ?? 1)>0,
-                  let data=info[kCGWindowBounds as String] as? [String:Any],
-                  let frame=CGRect(dictionaryRepresentation:data as CFDictionary) else { return false }
-            return frame.contains(point)
+        let system=AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system,0.25)
+        var hit:AXUIElement?
+        guard AXUIElementCopyElementAtPosition(system,Float(point.x),Float(point.y),&hit) == .success,
+              let hit=hit else { throw failure("target_occluded", "Cannot determine the accessibility target at pointer position") }
+        var hitPID:Int32=0
+        guard AXUIElementGetPid(hit,&hitPID) == .success,hitPID==(window["pid"] as? Int32) else {
+            throw failure("target_occluded", "Pointer target belongs to another application")
         }
-        guard (hit?[kCGWindowNumber as String] as? UInt32)==id else { throw failure("target_occluded", "Pointer target is obscured by another window") }
+        let hitWindow=attribute(hit,kAXWindowAttribute).flatMap { value -> AXUIElement? in
+            CFGetTypeID(value)==AXUIElementGetTypeID() ? (value as! AXUIElement) : nil
+        } ?? hit
+        guard CFEqual(hitWindow,try axWindow(window)) else { throw failure("target_occluded", "Pointer target belongs to another window") }
         position=point;try mouse(dragged ? .leftMouseDragged : .mouseMoved,.left,point)
     }
     func number(_ name:String)->Double { action[name] as? Double ?? 0 }
@@ -184,10 +253,10 @@ private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancel
     case "click":
         try move(number("x"),number("y"));let name=action["button"] as? String ?? "left"
         let button:CGMouseButton=name=="right" ? .right : name=="middle" ? .center : .left
-        let count=max(1,min(3,Int(number("click_count"))))
-        for _ in 0..<count {
-            try check(); heldMouse=button;try mouse(button == .left ? .leftMouseDown : button == .right ? .rightMouseDown : .otherMouseDown,button,position)
-            try mouse(button == .left ? .leftMouseUp : button == .right ? .rightMouseUp : .otherMouseUp,button,position);heldMouse=nil
+        let count=try boundedInteger(number("click_count"),1,3)
+        for index in 1...count {
+            try check(); heldMouse=button;try mouse(button == .left ? .leftMouseDown : button == .right ? .rightMouseDown : .otherMouseDown,button,position,Int64(index))
+            try mouse(button == .left ? .leftMouseUp : button == .right ? .rightMouseUp : .otherMouseUp,button,position,Int64(index));heldMouse=nil
             if count > 1 { Thread.sleep(forTimeInterval:0.02) }
         }
     case "type_text":
@@ -198,10 +267,12 @@ private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancel
         for code in codes {try check();heldKeys.append(code);flags.formUnion(modifier(code));try key(code,true)}
         for code in codes.reversed() {flags.subtract(modifier(code));try key(code,false);heldKeys.removeLast()}
     case "scroll":
-        try move(number("x"),number("y"));guard let event=CGEvent(scrollWheelEvent2Source:nil,units:.line,wheelCount:2,wheel1:-Int32(number("dy")),wheel2:-Int32(number("dx")),wheel3:0) else { throw failure("input_failed", "Cannot allocate scroll event") };event.post(tap:.cghidEventTap)
+        let dx=try boundedInteger(number("dx"),-20,20),dy=try boundedInteger(number("dy"),-20,20)
+        try move(number("x"),number("y"));guard let event=CGEvent(scrollWheelEvent2Source:nil,units:.line,wheelCount:2,wheel1:-Int32(dy),wheel2:-Int32(dx),wheel3:0) else { throw failure("input_failed", "Cannot allocate scroll event") };event.location=position;event.post(tap:.cghidEventTap)
     case "drag":
+        let duration=try boundedInteger(number("duration_ms"),50,3000)
         try move(number("from_x"),number("from_y"));heldMouse = .left;try mouse(.leftMouseDown,.left,position)
-        let steps=max(1,Int(number("duration_ms"))/10)
+        let steps=duration/10
         for step in 1...steps { let t=Double(step)/Double(steps);try move(number("from_x")+(number("to_x")-number("from_x"))*t,number("from_y")+(number("to_y")-number("from_y"))*t,true);Thread.sleep(forTimeInterval:0.01) }
         try mouse(.leftMouseUp,.left,position);heldMouse=nil
     default: throw failure("unsupported_action", "Unknown input action")

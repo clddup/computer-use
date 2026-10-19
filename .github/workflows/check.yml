@@ -29,6 +29,9 @@ jobs:
         run: cargo build --manifest-path native/Cargo.toml --workspace --locked
       - name: Rust tests
         run: cargo test --manifest-path native/Cargo.toml --workspace --locked
+      - name: macOS bridge checks without desktop permissions
+        if: runner.os == 'macOS'
+        run: node scripts/macos-bridge-checks.mjs
       - name: Install TypeScript dependencies
         run: pnpm --dir typescript install --frozen-lockfile
       - name: Build, generated protocol check, and unit/integration tests

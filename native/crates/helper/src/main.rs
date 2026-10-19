@@ -726,6 +726,15 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
+    #[cfg(target_os = "macos")]
+    if args.len() == 1 && matches!(args[0].as_str(), "--permissions" | "--request-permissions") {
+        // Host-only CLI entry; never exposed as a wire/MCP authorization tool.
+        println!(
+            "{}",
+            cu_platform_macos::permissions(args[0] == "--request-permissions")?
+        );
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "--probe") {
         return probe_main();
     }
@@ -867,6 +876,8 @@ fn run() -> Result<()> {
             cancel.store(true, Ordering::SeqCst);
         }
         // Idle stop/EOF/expiry releases the lease without waiting for the next request.
+        // Keep draining queued requests so an in-flight act does not lose the stop reply.
+        // On EOF the reader drops its sender, and recv_timeout exits on Disconnected.
         if cancel.load(Ordering::SeqCst) {
             if let Some(s) = runtime.session.as_mut() {
                 s.observation = None;

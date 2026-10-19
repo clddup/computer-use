@@ -2,6 +2,35 @@
 
 日期：2026-10-19（含 2026-10-17/18 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
 
+## 2026-10-19 macOS 本机实施与 GUI 验收通过
+
+用户手动授予 Accessibility/Screen Recording 后，debug `.local/macos-gui-4LrtE5/`、release `.local/macos-gui-0vRDp9/` 各 **20 组真实 GUI 验收通过**。最终 helper `--permissions` 返回两项均为 true。两批 `after-input.png` 均已实际打开核对：Count 3、Hello 中文 👋、多行中文/换行/🌍、密码掩码及滚动后的内容；不是只检查 PNG 头。
+
+通过内容：AX 树和密码脱敏、真实 ScreenCaptureKit、元素/图像坐标点击、Command+A 与单行/多行 Unicode 输入并重新观察、NSEvent 双击/三击计数、滚动、拖动、观察失效、去重/冲突、跨 helper 桌面租约、移动窗口拒绝旧引用、显式激活/物理输入保持几何、真实持鼠标拖动中的 stop/EOF/TTL 取消与释放、默认拒绝及截图/输入独立授权、官方 MCP client 工具/图片/点击/停止。fixture 均已关闭，会话已停止；没有控制个人应用或上传截图。
+
+本机实测发现并修正：
+- 未打包 AppKit 进程的 NSRunningApplication.launchDate 为 nil 导致漏枚举：改用 proc_pidinfo 的内核启动秒/微秒绑定进程身份。
+- Swift JSON dictionary 整体转 `[String:Double]` 会失败：逐字段 NSNumber 解码，拒绝布尔、非有限或非正尺寸。
+- 截图以两倍尺寸配置时默认不缩放，产生黑边：设置 scalesToFit 并排除窗口阴影，真实截图重新核验。
+- Dock 有覆盖全屏但并不遮挡点击的透明系统窗口，矩形命中误拒绝：改用 AX 点命中并校验所属 PID 和目标 AX 窗口，不简单忽略系统窗口。
+- 滚轮事件未指定 location，鼠标移动异步时投递到旧位置：显式设置事件位置；fixture 同时记录真实滚动事件与内容偏移。
+- 曾误把 EOF 退出归因为缺少显式 break，并加了取消后立即退出，导致 act 被 stop 取消时 stop 响应丢失；真实 GUI 中失败后撤回该 break。保留排队响应处理，EOF 由 reader drop sender 后自然退出。新增无 GUI 的真实 helper queued-stop/EOF 回归，不把早期失败算为通过。
+- 新增仅宿主 CLI 的 `--permissions` / `--request-permissions`：分别检查与显式请求系统官方提示；不暴露为模型工具、不绕过 TCC。
+
+当前 Swift 无输入检查为 **5 组**（内核身份、JSON bounds、捕获预算、整数边界、多击元数据），Rust **13** 项、TypeScript **20** 项通过（含新增排队 stop/EOF 回归），fmt、clippy `-D warnings`、协议漂移和 typecheck 均通过。最终 debug 复验 `.local/macos-gui-Gmr40k/` 仍为 20 组通过。尚未覆盖真实个人/办公应用、所有显示器布局、非美式快捷键、强杀恢复或正式签名/公证分发。以下保留最初权限阻塞阶段的记录，不表示当前仍阻塞。
+
+### 初始权限阻塞阶段
+
+- 主机为 Apple Silicon / macOS 27.0.1，Rust 1.94.1、Swift 6.4、Node 24.14.0；使用锁文件安装项目依赖，未修改全局配置或系统授权。
+- 当前基线提交 `85dd717` 的 GitHub Actions run [39145044201](https://github.com/clddup/computer-use/actions/runs/39145044201) 已通过 macOS 14 原生构建、Rust 测试及 TypeScript 检查；历史“macOS 从未编译”的描述已过时。这不代表交互桌面验收通过。
+- 本机构建 debug/release helper 成功；`otool -L` 显示依赖 `@rpath/libcu_macos_bridge.dylib`，实际 capabilities 请求成功，证明开发树内 bridge 可加载，不证明移出构建树后的分发可用。
+- 实施：CoreGraphics click-state 元数据、有界激活等待/几何复验、公共 `activate_window`、截图前像素预算/排除窗口阴影、截图超时取消任务、输入权限复查及桥接整数边界。helper 退出路径的早期修改已在后续真实 GUI 回归中撤回，原因见上。未实现 app discovery/launch 或 AX semantic，不把缺 `set_value` 当作缺文本输入。
+- 新增 AppKit fixture 与 `scripts/macos-e2e.mjs`，状态由原生控件及独立 oracle 核对；测试产物仅在被忽略的 `.local/`。完整脚本覆盖 SDK/MCP、AX/截图/Unicode、多击、滚动拖动、去重、观察失效和 stop/EOF/TTL，但下述权限阻塞意味着这些 GUI 断言尚未实测通过。
+- `pnpm --dir typescript test:macos:bridge` **3 组通过**：截图尺寸/像素预算、有限整数边界、多击 CGEvent 元数据；只构造事件，不投递、不截图、不触发权限请求。首轮测试编译因 CGFloat/Double 常量重载歧义失败，显式指定 CGFloat 后重跑通过，未把首轮记为成功。
+- `test:gui:macos:smoke` **通过**：`.local/macos-gui-dNgph0/`，自建窗口真实启动并写入 oracle，随后关闭；仅启动验证，不是输入/截图验收。
+- `test:gui:macos` **blocked / exit 2**：`.local/macos-gui-P9gNa1/`，helper 报 `Accessibility permission is missing`，脚本在启动 fixture 前停止，无输入投递。屏幕录制权限及真实 GUI 输入尚未验证，需用户手动授权负责的宿主/helper 后继续；没有绕过 TCC 或控制个人应用。
+- Rust 基线 **13** 项、TypeScript **19** 项通过；新增无权限 Swift 检查已接入 macOS CI 步骤，本轮工作区改动尚未提交/推送，不能称新 CI 已运行。
+
 ## 2026-10-19 窗口激活与 WPS 实测
 
 - 移除激活过程中的无条件 `SW_RESTORE` 及 `SwitchToThisWindow`；保持普通/最大化窗口状态，已最小化窗口仍按现有契约拒绝。物理输入在激活之后再次验证进程身份和窗口几何，拒绝使用已变化的旧坐标。
@@ -91,7 +120,7 @@ TypeScript transport/runtime 测试中使用模拟子进程/传输，验证 chun
 ## 尚未验证 / 尚未完成
 
 - **Codex/WPS 类真实应用**：应用 profile 已支持 Windows 冷启动，但尚未用 WPS 或个人应用做 GUI 验收；不得把自建 fixture 结果当作 WPS 已成功。用户测试前仍需宿主明确写入 WPS 的固定、可审查启动 profile，并使用新空白文档。
-- **macOS**：Swift bridge 尚未在 Mac 上编译/加载；AX、TCC、ScreenCaptureKit、坐标和停止 GUI 验收、签名/公证仍待真实环境。rpath 元数据已接到最终 helper，但当前不声称已验证正确加载。
+- **macOS**：Apple Silicon 本机 debug/release 各 20 组 SDK/MCP fixture GUI 验收通过；仍需验证真实应用、所有显示器布局、不同宿主的 TCC 归属，以及签名/公证和离开构建树后的分发加载。
 - **Linux**：尚未原生链接/GUI 测试；EWMH frame、AT-SPI toolkit 兼容性与 Unicode 编辑语义待验。输入路径的同步 X11 roundtrip 在 X server 挂死时可能延迟取消，不保证该故障下有界停止。
 - **CI**：GitHub Actions run [39046692426](https://github.com/clddup/computer-use/actions/runs/39046692426) 已通过 Windows、Linux/macOS 原生构建、Rust 测试和 TypeScript 检查；workflow 已迁移到 Node 24-compatible actions，GitHub hosted runner 结果不替代 macOS/Linux 原生 GUI 验收。未发布 npm 或安装包。
 - 观察树/截图非原子、locator 非强控件身份，TOCTOU 无法完全消除；Unix lease symlink 检查不是完整抗同用户竞态沙箱。

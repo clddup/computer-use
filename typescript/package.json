@@ -15,6 +15,9 @@
     "test": "vitest run",
     "test:gui": "node ../scripts/windows-e2e.mjs",
     "test:gui:cold-start": "node ../scripts/windows-cold-start-e2e.mjs",
+    "test:macos:bridge": "node ../scripts/macos-bridge-checks.mjs",
+    "test:gui:macos": "node ../scripts/macos-e2e.mjs",
+    "test:gui:macos:smoke": "node ../scripts/macos-e2e.mjs --fixture-smoke",
     "check": "pnpm build && pnpm protocol:check && pnpm typecheck && pnpm test",
     "mcp": "node packages/mcp/dist/main.js"
   },

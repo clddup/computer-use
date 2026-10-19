@@ -36,6 +36,15 @@ describe('Generated TypeScript/Rust wire compatibility', () => {
     expect(actual).toEqual(expected);
     expect(values.map(v => Boolean(validator('Request')(v)))).toEqual(expected);
   });
+  it('acknowledges queued stop before exiting on stdin EOF', () => {
+    const messages = [{ ...request('capabilities'), id: 'caps' }, { ...request('stop', { session_id: 'no-session' }), id: 'stop' }];
+    const native = spawnSync(helper, [], { input: messages.map(v => JSON.stringify(v)).join('\n') + '\n', encoding: 'utf8', timeout: 3000 });
+    expect(native.status, native.stderr || native.error?.message).toBe(0);
+    const responses = native.stdout.trim().split('\n').map(line => JSON.parse(line));
+    expect(responses.map(r => r.id)).toEqual(['caps', 'stop']);
+    expect(responses[1].error).toBeNull();
+    expect(responses[1].result.stopped).toBe(true);
+  });
   it('keeps request correlation IDs distinct from action deduplication IDs', () => {
     expect(validator('Request')(request('start'))).toBe(true);
     expect(validator('Request')({ version: 1, id: 'a', method: 'start', params: {} })).toBe(false);

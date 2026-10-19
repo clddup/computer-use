@@ -47,6 +47,9 @@ mod implementation {
             .map_err(|e| Error::new("invalid_params", e.to_string()))?;
         unsafe { decode(cu_macos_query(input.as_ptr())) }
     }
+    pub fn permissions(request: bool) -> Result<serde_json::Value> {
+        query(json!({"method":"permissions","request":request}))
+    }
     impl Backend for MacosBackend {
         fn capabilities(&self) -> Capabilities {
             query(json!({"method":"capabilities"})).unwrap_or_else(|e| Capabilities {
@@ -70,6 +73,11 @@ mod implementation {
         fn prepare(&self, window: &Window) -> Result<()> {
             let _: bool = query(json!({"method":"prepare","window":window}))?;
             Ok(())
+        }
+        fn activate_window(&self, window: &Window, cancel: &AtomicBool) -> Result<()> {
+            cu_core::cancelled(cancel)?;
+            self.prepare(window)?;
+            cu_core::cancelled(cancel)
         }
         fn observe(
             &self,
@@ -106,4 +114,4 @@ mod implementation {
     }
 }
 #[cfg(target_os = "macos")]
-pub use implementation::MacosBackend;
+pub use implementation::{permissions, MacosBackend};

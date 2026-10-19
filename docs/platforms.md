@@ -3,12 +3,12 @@
 | 平台 | 真实实现 | 本轮验证 | 限制 |
 | --- | --- | --- | --- |
 | Windows | Win32/DWM、UI Automation、WGC、SendInput；固定 host-approved app profile 的直接启动与窗口 readiness | Windows 11 build 26200 编译、单测、SDK/MCP 自建 GUI 实测及 debug/release 冷启动实测 | 可见普通完整性窗口；v2 UIA Invoke/Toggle/Select/SetValue 实测，不控制 UAC/安全桌面 |
-| macOS | AX、ScreenCaptureKit 单帧、CoreGraphics，Swift C ABI bridge | **未在 macOS 编译或 GUI 实测** | macOS 14+；需 AX/屏幕录制权限，窗口 AX 几何关联必须唯一 |
+| macOS | AX、ScreenCaptureKit 单帧、CoreGraphics，Swift C ABI bridge；显式窗口激活 | Apple Silicon / macOS 27.0.1 debug/release 各 **20 组真实 SDK/MCP GUI 验收通过**，另有无输入桥接检查 | macOS 14+；需 AX/屏幕录制权限，窗口 AX 几何关联必须唯一；未覆盖所有应用/多屏组合或正式签名分发 |
 | Linux | X11/EWMH、XTEST、AT-SPI D-Bus、root screen-region PNG | aarch64-unknown-linux-gnu cargo check 通过，**未链接/GUI 实测** | 仅 X11；无 native Wayland；截图可能含遮挡物，Unicode 使用 EditableText |
 
 capabilities 报后端声明，不是所有权限、控件及截图都已验证可用的证明；具体失败由观察/动作返回。
 
-Windows 目前是唯一实现并验收了 app discovery/launch 生命周期的平台；macOS/Linux 的 shared wire 方法会明确返回 `unsupported_action`，不因工具被发现就宣称已具备跨平台启动。
+Windows 目前是唯一实现并验收了 app discovery/launch 生命周期的平台；macOS/Linux 的应用发现/启动会明确返回 `unsupported_action`，不因工具被发现就宣称已具备跨平台启动。macOS 的 `activate_window` 已接通有界激活准备路径，并通过同进程双窗口的激活/几何保持验收。
 
 ## Windows
 
@@ -30,7 +30,27 @@ find native/target/release/build -name libcu_macos_bridge.dylib
 otool -L native/target/release/cu-helper
 ```
 
-权限由用户在 System Settings 手动授予；不同签名/路径/TCC 归属可能影响 helper 子进程。项目不会自动授权或绕过。正式分发还需在真实 Mac 上验证 bridge 加载、签名/公证、TCC、屏幕像素到点的映射及 GUI E2E；当前没有已签名/公证安装包，也没有 macOS 通过的报告。CI 配置不等于 CI 已运行。
+权限由用户在 System Settings → Privacy & Security 手动授予 Accessibility 和 Screen & System Audio Recording（具体名称随系统版本变化）；不同签名/路径/TCC 归属可能影响 helper 子进程。`cu-helper --permissions` 仅检查两类权限，`cu-helper --request-permissions` 由宿主显式触发官方授权提示（AXIsProcessTrustedWithOptions / CGRequestScreenCaptureAccess）；仍需用户亲自允许，不能绕过或自动授权。两者不是 wire/MCP 工具，不允许模型经工具自行请求权限。默认运行与 GUI 测试预检不弹窗。`capabilities.available` 只反映 AX 权限，不保证屏幕录制可用。正式分发仍需验证签名/公证、TCC 和移动出构建树后的 dylib 加载；当前没有已签名/公证安装包。
+
+本机验证命令（先构建 helper 和 TypeScript）：
+
+```sh
+cargo build --manifest-path native/Cargo.toml --workspace --locked
+pnpm --dir typescript install --frozen-lockfile
+pnpm --dir typescript check
+pnpm --dir typescript test:macos:bridge
+pnpm --dir typescript test:gui:macos:smoke
+# 首次使用可显式请求官方授权提示，需用户手动允许：
+native/target/debug/cu-helper --request-permissions
+native/target/debug/cu-helper --permissions
+pnpm --dir typescript test:gui:macos
+```
+
+- `test:macos:bridge`：编译真实 bridge，检查内核进程身份、混合 JSON 数值 bounds、截图尺寸预算、整数边界及 CGEvent 多击元数据；不截图、不投递事件、不请求权限。
+- `test:gui:macos:smoke`：仅启动自建 AppKit 窗口并读取其 synthetic oracle；不证明截图/输入可用。
+- `test:gui:macos`：仅操作新建 fixture，验证 SDK/MCP、截图/AX/输入、观察失效、去重及 stop/EOF/TTL。AX 或屏幕录制预检缺权限时在启动窗口前以 exit 2 阻塞；观察阶段权限被撤销也记为 blocked，不冒充通过。需要手动授权真实负责的宿主/helper，必要时重启宿主后重跑；测试脚本不修改系统权限。
+- 每次测试产物位于被忽略的 `.local/macos-gui-*`，`results.json` 区分 `passed`、`blocked`、`failed`、`smoke-only`。测试期间暂停人工键鼠操作；真实截图通过后仍需打开核对，不仅检查 PNG 文件头。
+- fixture 的 `command.json` 仅允许移动测试窗口与切换其内部窗口，用于故障注入；实际点击、文本等输入只能经 SDK/helper 发生。
 
 ## Linux
 
