@@ -3,8 +3,19 @@ import AppKit
 import ApplicationServices
 import ScreenCaptureKit
 
-private struct BridgeError: Error { let code: String; let message: String }
+private struct BridgeError: Error { let code: String; let message: String; var mayHaveExecuted=false }
 private func failure(_ code: String, _ message: String) -> BridgeError { BridgeError(code: code, message: message) }
+func afterDispatch<T>(_ operation:() throws -> T) throws -> T {
+    do { return try operation() }
+    catch let error as BridgeError {
+        throw BridgeError(code:error.code,message:error.message,mayHaveExecuted:true)
+    }
+    catch { throw BridgeError(code:"os_error",message:String(describing:error),mayHaveExecuted:true) }
+}
+func bridgeFailureData(_ error:Error) -> [String:Any] {
+    let failure=error as? BridgeError ?? BridgeError(code:"os_error",message:String(describing:error))
+    return ["code":failure.code,"message":failure.message,"may_have_executed":failure.mayHaveExecuted]
+}
 private func now() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
 private func identifier() -> String { UUID().uuidString }
 private func rect(_ value: CGRect) -> [String: Any] { ["x": value.origin.x, "y": value.origin.y, "width": value.width, "height": value.height] }
@@ -155,6 +166,21 @@ private func capture(_ window: [String: Any]) throws -> [String: Any] {
     return try result.get()
 }
 private final class CaptureBox: @unchecked Sendable { var result: Result<[String:Any],Error>? }
+private func prepare(_ window:[String:Any]) throws -> Bool {
+    let element=try axWindow(window)
+    guard let pid=window["pid"] as? Int32, let app=NSRunningApplication(processIdentifier:pid) else { throw failure("invalid_window", "Application exited") }
+    return try afterDispatch {
+        guard app.activate(options:[]) else { throw failure("focus_failed", "Could not activate target application") }
+        guard AXUIElementPerformAction(element,kAXRaiseAction as CFString) == .success else { throw failure("focus_failed", "Could not raise target AX window") }
+        let deadline=ProcessInfo.processInfo.systemUptime+1.5
+        repeat {
+            try validate(window)
+            if try isForeground(window) { return true }
+            RunLoop.current.run(until:Date().addingTimeInterval(0.01))
+        } while ProcessInfo.processInfo.systemUptime<deadline
+        throw failure("focus_failed", "Target window did not become foreground before the activation deadline")
+    }
+}
 private func query(_ request: [String: Any]) throws -> Any {
     let method=request["method"] as? String ?? ""
     if method=="permissions" {
@@ -178,19 +204,7 @@ private func query(_ request: [String: Any]) throws -> Any {
     guard let window=request["window"] as? [String:Any] else { throw failure("invalid_params", "Missing window") }
     try validate(window)
     if method=="validate" { return true }
-    if method=="prepare" {
-        let element=try axWindow(window)
-        guard let pid=window["pid"] as? Int32, let app=NSRunningApplication(processIdentifier:pid) else { throw failure("invalid_window", "Application exited") }
-        guard app.activate(options:[]) else { throw failure("focus_failed", "Could not activate target application") }
-        guard AXUIElementPerformAction(element,kAXRaiseAction as CFString) == .success else { throw failure("focus_failed", "Could not raise target AX window") }
-        let deadline=ProcessInfo.processInfo.systemUptime+1.5
-        repeat {
-            try validate(window)
-            if try isForeground(window) { return true }
-            RunLoop.current.run(until:Date().addingTimeInterval(0.01))
-        } while ProcessInfo.processInfo.systemUptime<deadline
-        throw failure("focus_failed", "Target window did not become foreground before the activation deadline")
-    }
+    if method=="prepare" { return try prepare(window) }
     if method=="observe" {
         let elements=(request["accessibility"] as? Bool ?? false) ? try tree(window) : []
         let images=(request["screenshot"] as? Bool ?? false) ? [try capture(window)] : []
@@ -282,8 +296,7 @@ private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancel
 private func dispatch(_ input:UnsafePointer<CChar>,_ operation:([String:Any]) throws -> Any)->UnsafeMutablePointer<CChar>? {
     let response:[String:Any]
     do { let data=Data(String(cString:input).utf8);guard let request=try JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw failure("invalid_params", "Invalid JSON request") };response=["result":try operation(request)] }
-    catch let error as BridgeError { response=["error":["code":error.code,"message":error.message]] }
-    catch { response=["error":["code":"os_error","message":String(describing:error)]] }
+    catch { response=["error":bridgeFailureData(error)] }
     guard let data=try? JSONSerialization.data(withJSONObject:response,options:[.fragmentsAllowed]),let string=String(data:data,encoding:.utf8) else { return nil }
     return strdup(string)
 }

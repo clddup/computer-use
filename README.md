@@ -73,7 +73,7 @@ pnpm --dir typescript test:gui
 }
 ```
 
-应用路径和参数必须由可信宿主预先写入策略；`launch_app` 的返回表示启动投递及窗口 readiness，启动器 PID 退出或后台进程存在都不等于可操作窗口。调用方应 `list_apps`/`launch_app` 后重新 `list_windows`，候选不唯一时停止并列出候选。既有 PID 授权仍支持；应用启动只执行固定的 host-approved profile，不是任意进程执行 API。
+应用路径和参数必须由可信宿主预先写入策略；`launch_app` 的返回表示启动投递及窗口 readiness，启动器 PID 退出或后台进程存在都不等于可操作窗口。调用方应 `list_apps`/`launch_app` 后重新 `list_windows`；启动为 `pending` 时，重新 `list_apps` 或 `list_windows` 可发现并绑定迟到窗口，不需要再次启动。候选不唯一时停止并列出候选。既有 PID 授权仍支持；应用启动只执行固定的 host-approved profile，不是任意进程执行 API。
 
 这是一层操作约束，**不是操作系统沙箱**。允许控制的应用可能通过快捷键、应用菜单或网络产生外部影响；宿主必须按任务授权并审查。不要授权密码管理器、支付、管理员/安全桌面或含敏感信息的窗口。[完整安全边界](docs/security.md)。
 

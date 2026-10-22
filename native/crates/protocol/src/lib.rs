@@ -246,6 +246,11 @@ impl Error {
             may_have_executed: false,
         }
     }
+    /// Marks failure after an operation may have crossed its side-effect boundary.
+    pub fn after_dispatch(mut self) -> Self {
+        self.may_have_executed = true;
+        self
+    }
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

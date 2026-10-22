@@ -98,8 +98,12 @@ export class HelperTransport {
         if (!pending) continue; // Late responses never trigger a retry, including an older negotiated profile.
         if (response.version !== pending.version) throw new Error('Response version differs from request');
         clearTimeout(pending.timer); this.pending.delete(response.id);
-        if (response.error) pending.reject(new ComputerUseError(response.error.code, response.error.message, response.error.may_have_executed));
-        else pending.resolve(response.result);
+        if (response.error) {
+          const { code, message, may_have_executed } = response.error;
+          pending.reject(pending.inputAction && may_have_executed
+            ? new UnknownExecutionError(`${code}: ${message}; operation may have executed. Do not replay.`, pending.actionId)
+            : new ComputerUseError(code, message, may_have_executed));
+        } else pending.resolve(response.result);
       } catch { this.protocolFailure('Invalid helper protocol response'); return; }
     }
     if (this.buffer.length > MAX_FRAME) this.protocolFailure('Oversized partial helper frame');

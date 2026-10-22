@@ -26,6 +26,7 @@
 - 本地运行时调用 `stop()`，MCP 调用 `computer_stop`；helper CTRL-C、stdin EOF、会话 TTL 也取消。
 - stop 必须能在 act 尚未完成时调用，不要先 await 长动作再请求停止。
 - 取消可能发生在部分输入后。unknown/UnknownExecutionError 必须先核对现场，不自动再点击、再提交或重发文本。
+- 启动/激活错误的 `may_have_executed=true` 同样表示不能安全重试；SDK 抛 `UnknownExecutionError`。会话仍活动时先重新枚举核对应用/窗口；会话已经停止时，旧 helper 的日志和引用不再可用。进入原生激活阶段即作废旧观察，之后即使激活失败也不能复用旧观察输入。
 - 同一 helper 的 action_status 可核对仍保留的日志；stop 后日志释放，重启后不能靠相同 action_id 恢复去重。
 - 正常取消释放项目持有的键鼠，不承诺撤回操作；强杀、崩溃、机器断电不能保证 cleanup。
 - Windows 物理输入/macOS 拒绝检测到的用户物理 modifier；Windows semantic UIA 不经物理输入路径，但 provider 仍可能改变前台/焦点。任何平台上运行 GUI 测试时都应暂停人工操作。输入注入不是与人类输入隔离的专用通道；不移动 cursor 也不等于完全不影响用户。

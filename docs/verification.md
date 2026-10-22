@@ -1,6 +1,17 @@
 # 实际验证记录
 
-日期：2026-10-19（含 2026-10-17/18 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+日期：2026-10-22（含 2026-10-17/18/19 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+
+## 2026-10-22 M0 执行内核、非 GUI 回归及 GUI 权限阻塞
+
+本轮修复窗口实时校验、迟到窗口绑定，以及启动/激活的副作用不确定性。helper 使用可注入的后端和租约工厂，按会话、应用、窗口、动作、stdio、worker 拆分；Windows 后端按辅助功能、截图、物理输入和应用生命周期拆分。移动的 AX、截图及物理输入逻辑除接收者与模块可见性外保持原有实现，不增加模型能力或权限。
+
+- 先完成行为保持的拆分，原有 **20** 项 TypeScript 测试仍通过；随后新增状态机回归，观察到 **7** 个失败场景后修复。继续通过红测复现并修复 worker 激活前缺少复验、激活不确定后仍可复用旧观察，以及 macOS bridge 丢失执行标记的问题。失败日志位于被忽略的 `.local/m0-baseline/`，没有把首轮失败记作通过。
+- macOS 本机 `cargo test --workspace --locked` **41** 项通过：core 10、helper 29、macOS bridge 错误解码 2。新增用例覆盖关闭/移动/句柄或 PID 复用、pending/unknown 启动的重新发现、不因枚举扩大授权、投递后取消、旧观察失效、动作去重，以及 worker 错误边界。内存后端测试不是 GUI 或 OS 输入释放证据。
+- TypeScript 四包构建、协议生成物一致性、严格类型检查及 **24** 项 Vitest 通过。新增测试证明 native 的不确定错误会转换为 `UnknownExecutionError`，明确的投递前拒绝不被误报为已执行；没有自动重放。
+- Swift 无输入桥接检查 **6** 组通过，新增投递前/后错误标记检查。该检查不激活窗口、不截图、不投递输入，也不请求权限。
+- macOS workspace build、fmt、Clippy `-D warnings` 通过。Windows `x86_64-pc-windows-msvc` workspace/all-targets 交叉类型检查和 Clippy `-D warnings` 通过；这不证明 Windows 链接、运行或 GUI 回归通过。
+- 本轮 macOS debug GUI 预检 **blocked / exit 2**：`.local/macos-gui-UVZFEw/results.json`。helper 返回 `Accessibility=true`、`Screen Recording=false`，脚本在启动 fixture 前停止，没有截图、输入投递、权限请求或 TCC 修改。Windows GUI 未重跑；下方历史 GUI 证据不作为本轮修改后的验收。用户手动补齐负责宿主/helper 的屏幕录制权限后，仍须在隔离交互桌面重跑 SDK/MCP GUI、stop/EOF/TTL 与启动故障注入。
 
 ## 2026-10-19 macOS 本机实施与 GUI 验收通过
 

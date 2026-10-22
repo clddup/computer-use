@@ -32,15 +32,20 @@ mod implementation {
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| Error::new("bridge_failed", e.to_string()))?;
         if let Some(error) = value.get("error") {
-            return Err(Error::new(
-                error["code"].as_str().unwrap_or("os_error"),
-                error["message"]
-                    .as_str()
-                    .unwrap_or("macOS operation failed"),
-            ));
+            return Err(bridge_error(error));
         }
         serde_json::from_value(value["result"].clone())
             .map_err(|e| Error::new("bridge_failed", e.to_string()))
+    }
+    fn bridge_error(value: &serde_json::Value) -> Error {
+        let mut error = Error::new(
+            value["code"].as_str().unwrap_or("os_error"),
+            value["message"]
+                .as_str()
+                .unwrap_or("macOS operation failed"),
+        );
+        error.may_have_executed = value["may_have_executed"].as_bool().unwrap_or(false);
+        error
     }
     fn query<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T> {
         let input = CString::new(value.to_string())
@@ -76,8 +81,14 @@ mod implementation {
         }
         fn activate_window(&self, window: &Window, cancel: &AtomicBool) -> Result<()> {
             cu_core::cancelled(cancel)?;
-            self.prepare(window)?;
-            cu_core::cancelled(cancel)
+            self.prepare(window).map_err(|error| {
+                if error.code == "bridge_failed" {
+                    error.after_dispatch()
+                } else {
+                    error
+                }
+            })?;
+            cu_core::cancelled(cancel).map_err(Error::after_dispatch)
         }
         fn observe(
             &self,
@@ -110,6 +121,25 @@ mod implementation {
                     is_cancelled,
                 ))
             }
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn preserves_bridge_dispatch_uncertainty() {
+            let error = bridge_error(
+                &json!({"code":"focus_failed", "message":"Activation began", "may_have_executed":true}),
+            );
+            assert!(error.may_have_executed);
+            assert_eq!(error.code, "focus_failed");
+        }
+        #[test]
+        fn old_bridge_errors_default_to_no_dispatch() {
+            assert!(
+                !bridge_error(&json!({"code":"invalid_window", "message":"Before activation"}))
+                    .may_have_executed
+            );
         }
     }
 }

@@ -81,3 +81,23 @@ describe('Helper transport failure boundaries (isolated protocol tests, not GUI)
     child.emit('close', 1); await Promise.all(pending);
   });
 });
+
+describe('Native side-effect error classification', () => {
+  it.each([
+    ['act', { session_id: 's', observation_id: 'o', action_id: 'a', action: { kind: 'type_text', text: 'fixture' } }, 'a'],
+    ['launch_app', { session_id: 's', app_id: 'fixture' }, 'fixture'],
+    ['activate_window', { session_id: 's', window: { id: 'w', pid: 1, process_identity: 'p', title: 'Fixture', bounds: { x: 0, y: 0, width: 10, height: 10 } } }, 'w'],
+  ])('reports native uncertainty for %s without replay', async (method, params, actionId) => {
+    const pending = transport.request(method, params);
+    respond(0, null, { error: { code: 'cancelled', message: 'Cancelled after dispatch', may_have_executed: true } });
+    await expect(pending).rejects.toBeInstanceOf(UnknownExecutionError);
+    await expect(pending).rejects.toMatchObject({ actionId, mayHaveExecuted: true });
+    expect(requests).toHaveLength(1);
+  });
+  it('preserves a definite rejection before launch dispatch', async () => {
+    const pending = transport.request('launch_app', { session_id: 's', app_id: 'fixture' });
+    respond(0, null, { error: { code: 'permission_denied', message: 'Profile denied', may_have_executed: false } });
+    await expect(pending).rejects.toMatchObject({ code: 'permission_denied', mayHaveExecuted: false });
+    expect(requests).toHaveLength(1);
+  });
+});

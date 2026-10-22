@@ -11,7 +11,16 @@ struct BridgeChecks {
         catch { }
     }
 
+    static func dispatchErrors() {
+        let error=NSError(domain:"SyntheticActivation",code:1)
+        expect(bridgeFailureData(error)["may_have_executed"] as? Bool == false)
+        do { try afterDispatch { throw error } }
+        catch { expect(bridgeFailureData(error)["may_have_executed"] as? Bool == true) }
+        print("PASS activation dispatch-boundary errors without activating a window")
+    }
+
     static func main() throws {
+        dispatchErrors()
         let identity=processIdentity(ProcessInfo.processInfo.processIdentifier)
         expect(identity != nil)
         expect(identity==processIdentity(ProcessInfo.processInfo.processIdentifier))

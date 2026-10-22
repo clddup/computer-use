@@ -16,6 +16,8 @@ Agent
 
 Rust 工程位于 `native/`，Node 工程位于 `typescript/`。MCP 与 SDK 不各自实现输入语义，共用 runtime；原生 helper 再执行权限、窗口身份、观察有效期和动作去重核验。TS 不加载 Rust 源码或私有 SDK。
 
+helper 的 `Runtime` 依赖已有 `Backend` 接口，并注入租约获取函数。生产后端保留原有隔离方式：查询和 UIA semantic 在 worker 中运行，物理输入在父执行线程运行；状态机单测使用内存后端与空租约，不获取真实桌面租约。代码按会话、应用、窗口、动作、stdio 和 worker 分离，测试不依赖真实桌面状态。
+
 ## Wire
 
 请求为 `{version:1,id,command:{method,params}}`，响应为 `{version:1,id,result,error}`，正常响应只有 result 非 null，错误响应只有 error 非 null。每个 JSON 后必须换行；单帧上限 **16 MiB（包括换行）**。不接受未知结构字段。`id` 是响应关联 ID，不是通用请求去重键；只有 `action_id` 有动作日志去重语义。
@@ -28,7 +30,8 @@ Rust `cu-protocol` 是 wire 类型源，schemars 生成 JSON Schema，再生成 
 
 ## 会话与观察
 
-- 会话可以从固定 `allowed_apps` profile 冷启动；启动后以真实可见窗口重新建立进程身份绑定。`get_window`/`activate_window` 重新核验窗口引用，激活后应重新 observe。
+- 会话可以从固定 `allowed_apps` profile 冷启动；启动后以真实可见窗口重新建立进程身份绑定。返回 `pending` 或仍活动会话中的启动结果不确定时，可以通过 `list_apps`/`list_windows` 发现并绑定迟到窗口，不需要重新启动应用。枚举不会自动绑定未请求启动的 profile。
+- `get_window` 实时核验进程身份和几何，而非只检查缓存。`activate_window` 在执行线程及查询 worker 内重新核验，并在可能开始激活之前清除旧观察；成功、失败或结果不确定后，输入前均需重新 observe。
 - 每个 helper 仅允许一次 start；stop 后创建新 runtime/helper。
 - 会话固定批准 PID 或 host-approved application profile 的进程启动身份，窗口引用包含 PID、启动身份、原生窗口 ID 和几何。
 - 每用户一个 OS 文件锁：保守覆盖所有显示器/桌面。锁直到执行线程退出输入路径、释放 RAII guard 后才释放，不允许按 TTL 抢锁。
@@ -47,6 +50,8 @@ Rust `cu-protocol` 是 wire 类型源，schemars 生成 JSON Schema，再生成 
 - **dispatched**：OS/API 接受；不代表应用已完成目标。
 - **verified**：协议保留状态，v0.1 后端不会自行返回此状态。
 - **unknown**：可能部分投递、取消、断线或响应遗失；不得自动重放。
+
+启动进程后发生的取消或查询失败，以及激活开始后发生的失败，使用现有错误字段 `may_have_executed=true`。worker 超时、失联或返回损坏数据时，如果对应请求可能产生副作用，也按不确定执行处理；worker 明确报告的投递前拒绝保持 false。TypeScript 将有副作用方法的这类错误转换为 `UnknownExecutionError`，保留动作/应用/窗口标识，禁止自动重放。该修复不改变 v1/v2 wire 结构。
 
 输入开始前日志写 provisional unknown；相同 action_id、相同观察 ID 和参数返回原记录，不再次投递；参数冲突拒绝。每 epoch 日志最多 1024 项。重启不继承日志、不承诺跨崩溃 exactly-once。状态查询只在活动会话仍保留时可用，stop/EOF/expiry 后日志随会话释放。
 
