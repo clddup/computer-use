@@ -1,15 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const { request, close } = vi.hoisted(() => ({ request: vi.fn(), close: vi.fn() }));
+const { request, close, permissions } = vi.hoisted(() => ({ request: vi.fn(), close: vi.fn(), permissions: vi.fn() }));
 vi.mock('../packages/runtime/dist/transport.js', async original => {
   const actual = await original();
   return { ...actual, HelperTransport: class { request = request; close = close; async negotiate() {} } };
 });
+vi.mock('../packages/runtime/dist/permissions.js', () => ({ ensureMacosPermissions: permissions }));
 import { ComputerRuntime } from '../packages/runtime/dist/index.js';
 beforeEach(() => {
   request.mockReset(); close.mockReset(); close.mockResolvedValue(undefined);
+  permissions.mockReset(); permissions.mockResolvedValue(undefined);
   request.mockImplementation(async method => method === 'start' ? { session_id: 's', helper_epoch: 'e', expires_at_ms: Date.now() + 30000 } : {});
 });
 describe('Runtime state and conservative outcome validation', () => {
+  it('does not start a native control session while system permission is missing', async () => {
+    const runtime = new ComputerRuntime({ helperPath: '/fixture' });
+    permissions.mockRejectedValueOnce(Object.assign(new Error('Screen Recording is missing'), { code: 'permissions_pending' }));
+    await expect(runtime.start()).rejects.toMatchObject({ code: 'permissions_pending' });
+    expect(request).not.toHaveBeenCalled(); await runtime.stop();
+  });
+  it('stop cancels system permission setup and late completion cannot start a session', async () => {
+    let release;
+    permissions.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const runtime = new ComputerRuntime({ helperPath: '/fixture' });
+    const start = runtime.start(); await runtime.stop();
+    expect(permissions.mock.calls[0][1].aborted).toBe(true);
+    release(); await expect(start).rejects.toMatchObject({ code: 'stopped' });
+    expect(request).not.toHaveBeenCalled();
+  });
   it('converts an invalid act result to unknown rather than a safe-to-retry validation error', async () => {
     const runtime = new ComputerRuntime({ helperPath: '/fixture' }); await runtime.start();
     await expect(runtime.act('o', { kind: 'key', keys: ['Tab'] }, 'a')).rejects.toMatchObject({ code: 'unknown_execution', mayHaveExecuted: true, actionId: 'a' });

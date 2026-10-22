@@ -52,8 +52,10 @@ mod implementation {
             .map_err(|e| Error::new("invalid_params", e.to_string()))?;
         unsafe { decode(cu_macos_query(input.as_ptr())) }
     }
-    pub fn permissions(request: bool) -> Result<serde_json::Value> {
-        query(json!({"method":"permissions","request":request}))
+    pub fn permissions(accessibility: bool, screen_recording: bool) -> Result<serde_json::Value> {
+        query(
+            json!({"method":"permissions","request_accessibility":accessibility,"request_screen_recording":screen_recording}),
+        )
     }
     impl Backend for MacosBackend {
         fn capabilities(&self) -> Capabilities {

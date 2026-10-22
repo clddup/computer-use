@@ -30,7 +30,7 @@ find native/target/release/build -name libcu_macos_bridge.dylib
 otool -L native/target/release/cu-helper
 ```
 
-权限由用户在 System Settings → Privacy & Security 手动授予 Accessibility 和 Screen & System Audio Recording（具体名称随系统版本变化）；不同签名/路径/TCC 归属可能影响 helper 子进程。`cu-helper --permissions` 仅检查两类权限，`cu-helper --request-permissions` 由宿主显式触发官方授权提示（AXIsProcessTrustedWithOptions / CGRequestScreenCaptureAccess）；仍需用户亲自允许，不能绕过或自动授权。两者不是 wire/MCP 工具，不允许模型经工具自行请求权限。默认运行与 GUI 测试预检不弹窗。`capabilities.available` 只反映 AX 权限，不保证屏幕录制可用。正式分发仍需验证签名/公证、TCC 和移动出构建树后的 dylib 加载；当前没有已签名/公证安装包。
+SDK/MCP 的 `start` 在 macOS 上先检查辅助功能/屏幕录制权限，缺少时调用 `AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess` 请求系统官方授权，再独立复查。不增加自制应用授权框或审批回调；系统是否显示提示、用户是否授予由 macOS 决定。未授予返回 `permissions_pending`，需用户在系统提示或 System Settings → Privacy & Security 中完成授权。`cu-helper --permissions` 仅检查，`--request-permissions` 显式请求；可追加 `--policy`，截图关闭时不请求屏幕录制。不同签名/路径/TCC 归属可能影响负责的宿主/helper，当前不重置 TCC、不自动修改权限。GUI 测试预检仍静默，`capabilities.available` 只反映 AX 权限；正式签名/公证分发仍未验收。
 
 本机验证命令（先构建 helper 和 TypeScript）：
 

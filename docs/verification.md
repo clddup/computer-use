@@ -2,6 +2,18 @@
 
 日期：2026-10-22（含 2026-10-17/18/19 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
 
+## 2026-10-22 需求纠正：只请求 macOS 系统权限
+
+此前自行加入的 SDK 强制审批回调、MCP elicitation 表单、逐应用授权缓存、应用身份 CLI 和自制授权测试窗口均已撤回；它们不是用户要求的辅助功能/屏幕录制系统授权。保留既有 Agent → SDK/MCP → helper 与固定 policy，不要求 Agent 接入额外审批 UI。
+
+SDK/MCP `start` 现在只做 macOS 系统权限预检 → 缺少时直接调用官方请求 API → 独立复查。是否授予由用户在 macOS 中决定；没有授予返回 `permissions_pending`，不启动控制会话。截图关闭的 policy 不请求屏幕录制；正常 GUI 回归预检仍静默，不重置 TCC、不自动点击系统权限开关。
+
+真实系统请求已执行一次，结果保存在 `.local/m2-interactive-acceptance/system-request.json`，仍为 `Accessibility=true`、`Screen Recording=false`。不能据此声称系统弹窗已经显示或权限已经授予。误加的可见应用审批测试已退出且未通过完整验收；它的结果不算系统权限验收，产物仅保留在被忽略的 `.local/` 供追溯。
+
+- 纠正后四包构建、协议一致性、typecheck 及 **33 项 TypeScript 测试**通过；**41 项 Rust 测试**、Clippy `-D warnings`、fmt、**6 组 Swift 无输入检查**通过。没有新增依赖或 wire 类型。
+- `.local/system-permissions-only/live-XJeymz/results.json` 验证真实 SDK 不带审批回调即可启动，以及没有 elicitation 能力的普通 MCP 客户端也能启动。仅操作自建 fixture 元数据，禁止输入、未截图；请求截图权限的下一会话则正确返回 `permissions_pending`，未开始控制。
+- 同次系统日志 `.local/system-permissions-only/tcc-correlated.log` 明确记录 `kTCCServiceScreenCapture, preflight=no`，证明发生了系统权限请求而非只做预检。本次父进程链的 TCC `responsible` 是 `/Applications/ChatGPT.app`，屏幕权限结果仍为未授予；不把这个宿主归属硬编码到其他 Agent，不推断未知的拒绝来源。完整授权后的截图/输入验收仍未通过。
+
 ## 2026-10-22 M0 执行内核、非 GUI 回归及 GUI 权限阻塞
 
 本轮修复窗口实时校验、迟到窗口绑定，以及启动/激活的副作用不确定性。helper 使用可注入的后端和租约工厂，按会话、应用、窗口、动作、stdio、worker 拆分；Windows 后端按辅助功能、截图、物理输入和应用生命周期拆分。移动的 AX、截图及物理输入逻辑除接收者与模块可见性外保持原有实现，不增加模型能力或权限。

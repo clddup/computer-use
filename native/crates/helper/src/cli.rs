@@ -16,17 +16,33 @@ pub(crate) fn run_mode(args: &[String]) -> Result<bool> {
         validate_protocol()?;
     } else {
         #[cfg(target_os = "macos")]
-        if args.len() == 1 && matches!(args[0].as_str(), "--permissions" | "--request-permissions")
+        if args
+            .first()
+            .is_some_and(|arg| matches!(arg.as_str(), "--permissions" | "--request-permissions"))
         {
-            println!(
-                "{}",
-                cu_platform_macos::permissions(args[0] == "--request-permissions")?
-            );
+            permission_mode(args)?;
             return Ok(true);
         }
         return Ok(false);
     }
     Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn permission_mode(args: &[String]) -> Result<()> {
+    let policy = load_policy(&args[1..])?;
+    if args.len() > 1 && policy.allowed_pids.is_empty() && policy.allowed_apps.is_empty() {
+        return Err(Error::new(
+            "permission_denied",
+            "Host policy has no approved PIDs or applications",
+        ));
+    }
+    let screen_recording = args.len() == 1 || policy.allow_screenshot;
+    let request = args[0] == "--request-permissions";
+    let mut status = cu_platform_macos::permissions(request, request && screen_recording)?;
+    status["required"] = json!({"accessibility":true,"screen_recording":screen_recording});
+    println!("{status}");
+    Ok(())
 }
 
 fn validate_protocol() -> Result<()> {

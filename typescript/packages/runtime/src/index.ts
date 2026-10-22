@@ -1,16 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { assertWire, type Action, type ActionOutcome, type Application, type Capabilities, type LaunchResult, type Observation, type Window } from '@independent-cu/protocol';
 import { ComputerUseError, UnknownExecutionError, HelperTransport, type HelperOptions } from './transport.js';
+import { ensureMacosPermissions } from './permissions.js';
 export { ComputerUseError, UnknownExecutionError, HelperTransport } from './transport.js';
 export type { HelperOptions } from './transport.js';
 
 export class ComputerRuntime {
   private readonly transport: HelperTransport;
+  private readonly options: HelperOptions;
+  private readonly cancel = new AbortController();
   private sessionId?: string;
   private busy = false;
   private stopped = false;
   private stopping?: Promise<void>;
   constructor(options: HelperOptions) {
+    this.options = Object.freeze({ ...options });
     this.transport = new HelperTransport(options);
     if (options.signal) {
       if (options.signal.aborted) void this.stop();
@@ -34,6 +38,8 @@ export class ComputerRuntime {
   async start(): Promise<{ session_id: string; helper_epoch: string; expires_at_ms: number }> {
     return this.exclusive(async () => {
       if (this.sessionId) throw new ComputerUseError('session_exists', 'Session already started');
+      await ensureMacosPermissions(this.options, this.cancel.signal);
+      if (this.stopped) throw new ComputerUseError('stopped', 'Start was cancelled during system permission setup');
       await this.transport.negotiate();
       const value = await this.transport.request('start') as { session_id: string; helper_epoch: string; expires_at_ms: number };
       if (!value || typeof value.session_id !== 'string' || typeof value.helper_epoch !== 'string' || typeof value.expires_at_ms !== 'number') throw new ComputerUseError('protocol_error', 'Invalid start result');
@@ -94,6 +100,7 @@ export class ComputerRuntime {
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopped = true;
+    this.cancel.abort();
     this.stopping = (async () => {
       try {
         if (this.sessionId) await this.transport.request('stop', { session_id: this.sessionId }, 5_000);

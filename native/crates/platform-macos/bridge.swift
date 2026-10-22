@@ -184,14 +184,15 @@ private func prepare(_ window:[String:Any]) throws -> Bool {
 private func query(_ request: [String: Any]) throws -> Any {
     let method=request["method"] as? String ?? ""
     if method=="permissions" {
-        let request=request["request"] as? Bool ?? false
+        let requestAccessibility=request["request_accessibility"] as? Bool ?? false
+        let requestScreenRecording=request["request_screen_recording"] as? Bool ?? false
         let accessibility:Bool
-        if request {
+        if requestAccessibility && !AXIsProcessTrusted() {
             let options=[kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String:true] as CFDictionary
             accessibility=AXIsProcessTrustedWithOptions(options)
         } else { accessibility=AXIsProcessTrusted() }
         let screenRecording=CGPreflightScreenCaptureAccess()
-        if request && !screenRecording { _ = CGRequestScreenCaptureAccess() }
+        if requestScreenRecording && !screenRecording { _ = CGRequestScreenCaptureAccess() }
         return ["accessibility":accessibility,"screen_recording":CGPreflightScreenCaptureAccess()]
     }
     if method=="capabilities" {

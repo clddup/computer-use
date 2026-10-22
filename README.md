@@ -77,6 +77,8 @@ pnpm --dir typescript test:gui
 
 这是一层操作约束，**不是操作系统沙箱**。允许控制的应用可能通过快捷键、应用菜单或网络产生外部影响；宿主必须按任务授权并审查。不要授权密码管理器、支付、管理员/安全桌面或含敏感信息的窗口。[完整安全边界](docs/security.md)。
 
+macOS 的 SDK/MCP `start` 会检查所需的辅助功能/屏幕录制权限，缺少时直接请求系统官方授权并复查；不会弹出本项目自制的应用审批框。系统权限尚未授予时返回 `permissions_pending`，不启动控制会话。详见 [macOS 权限](docs/platforms.md#macos)。
+
 ## TypeScript SDK
 
 仓库内可直接导入构建后的 SDK；目前不宣称已发布 npm 包：
