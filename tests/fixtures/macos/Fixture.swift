@@ -288,6 +288,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             "multiline_text": multiline.string,
             "command_id": commandID,
             "foreground_pid": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
+            "application_active": NSApp.isActive,
             "key_window_id": NSApp.keyWindow.map { String($0.windowNumber) } as Any? ?? NSNull(),
             "front_window_id": (frontWindow?[kCGWindowNumber as String] as? UInt32).map(String.init) as Any? ?? NSNull(),
             "pointer_x": CGEvent(source: nil)?.location.x ?? 0,

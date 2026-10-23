@@ -2,6 +2,16 @@
 
 日期：2026-10-23（含 2026-10-17/18/19/22 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
 
+## 2026-10-23 WPS 后台输入故障复验
+
+- 会话 `6cf02aa4-110e-4160-892b-30e352cf62cf` 已使用 `screencapturekit-stream`，不是旧桌面截图路径。普通定向点击虽返回 dispatched，WPS 新建浮层未出现；最后 `cmd` 不受支持却被记为 unknown，不能据此断言键盘已执行。
+- 对照本机 ChatGPT 原生符号与有界反汇编，补齐仅向目标 PID 发送的 AppKit activation、CPS key-focus-return 通知。WPS 从相同首页状态复现普通点击无效、补齐通知后浮层出现；原前台应用不变。切换同应用窗口保留合成焦点，切换应用及 stop/EOF 清理；用户已经真正激活目标时不发送合成反激活。不新增全局 HID 或隐式 raise/activate。
+- 显示宿主设为 accessory，不调用会引入启动激活副作用的 `finishLaunching`。共享标志实测为目标进程的 layer-0 `AXDialog`，唯一子按钮名为 `WindowSharingSessionButton`；按这一语义排除，不凭窗口尺寸、标题或 layer 猜测，也不隐藏真正的新建浮层。修复后实时枚举保留 WPS 文档、排除系统标志。
+- **真实 WPS 输入已验证**：通过项目 MCP 选择“文字”、创建 `文字文稿1`，输入“自我介绍”和完整中文段落；另用 CUA 只读窗口截图核实正文实际显示，状态栏字数 63。输入前后前台 PID 均为 1458；测试文档未保存、未上传，未读改已有文件。记录在 `.local/wps-6cf02/`，不提交个人应用截图或会话日志。
+- **录屏边界**：本测试宿主跨进程录屏预检仍为 false，WPS 输入验收使用 AX-only policy；CUA 截图只核实输入结果，不冒充项目的 WPS 跨进程取帧测试。项目自身取帧由一个自建后台窗口验证，`.local/macos-shared-capture-bCkQf1/results.json` 通过，红/蓝 PNG 已打开核对。测试移除自身自动激活的启动方式，并对异步合成后的像素更新作有界只读等待；此前失败不算通过。
+- **回归通过**：Rust 46 项、TypeScript 50 项、Swift 无输入检查 10 组；单应用后台真实 MCP 含 layer-24 浮层 12 组，`.local/macos-targeted-RtLTvR/results.json`。新增不支持的键在注入前 rejected、`cmd` 别名、应用内部激活及 stop 后反激活断言。异步鼠标采样仍可能包含人工移动，不将其冒充全程硬件隔离证明。Clippy `-D warnings`、fmt、构建、协议一致性及 typecheck 通过。
+- 本次未重跑 Windows/Linux GUI，未改变系统权限、全局 MCP 名称或配置。已运行的旧 helper 不会热载入 bridge，客户端需要重新连接 `app-use`。
+
 ## 2026-10-23 解锁后复验：共享帧与单应用 MCP
 
 - **真实窗口共享帧通过**：`.local/macos-shared-capture-z9Sc58/results.json`。只有一个自建后台窗口，PNG 为窗口自身的 720×544 画面，不含桌面、Dock 或上层应用。红→蓝的像素更新、4 次静态重读、取消不返回图片、幂等停止与系统共享状态断言通过；`shared-red.png`、`shared-blue.png` 已实际打开核对。系统紫色共享标志确实位于该窗口标题栏。

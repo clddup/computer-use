@@ -40,8 +40,52 @@ func targetedPointerEvent(_ type:CGEventType,_ button:CGMouseButton,_ point:CGPo
 }
 
 private let keycodes:[String:CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"l":37,"j":38,"k":40,"n":45,"m":46,"enter":36,"return":36,"tab":48,"space":49,"backspace":51,"escape":53,"esc":53,"meta":55,"command":55,"shift":56,"alt":58,"control":59,"ctrl":59,"left":123,"right":124,"down":125,"up":126,"delete":117,"home":115,"end":119,"pageup":116,"pagedown":121]
+func targetedKeyCodes(_ names:[String]) throws -> [CGKeyCode] {
+    try names.map { name in
+        let key=name.lowercased()=="cmd" ? "command":name.lowercased()
+        guard let code=keycodes[key] else {throw failure("unsupported_key","Unsupported key \(name)")}
+        return code
+    }
+}
 private func modifier(_ code:CGKeyCode)->CGEventFlags {
     switch code {case 55:return .maskCommand;case 56:return .maskShift;case 58:return .maskAlternate;case 59:return .maskControl;default:return []}
+}
+
+private var syntheticFocusTarget:(pid:Int32,identity:String)?
+func syntheticFocusEvents(active:Bool) throws -> [CGEvent] {
+    // AppKit activation and CPS key-focus notifications affect only the receiving process.
+    let notifications:[(UInt,Int16)]
+    if active { notifications=[(13,1),(21,Int16(bitPattern:0x8000))] }
+    else { notifications=[(21,0x4000),(13,2)] }
+    return try notifications.map { type,subtype in
+        guard let event=NSEvent.otherEvent(with:NSEvent.EventType(rawValue:type)!,location:.zero,
+                modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:0,context:nil,
+                subtype:subtype,data1:0,data2:0)?.cgEvent else {
+            throw failure("unsupported_environment","Cannot create process-local focus notifications")
+        }
+        return event
+    }
+}
+func releaseSyntheticFocus(unless window:[String:Any]?=nil) throws {
+    guard let target=syntheticFocusTarget else { return }
+    if window?["process_identity"] as? String == target.identity { return }
+    guard processIdentity(target.pid)==target.identity,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier != target.pid else {
+        syntheticFocusTarget=nil; return
+    }
+    for event in try syntheticFocusEvents(active:false) { event.postToPid(target.pid) }
+    syntheticFocusTarget=nil
+}
+private func enforceSyntheticFocus(_ window:[String:Any],post:(CGEvent)->Void) throws {
+    guard let pid=window["pid"] as? Int32,let identity=window["process_identity"] as? String else {
+        throw failure("invalid_window","Missing process identity")
+    }
+    try releaseSyntheticFocus(unless:window)
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier != pid else { return }
+    let events=try syntheticFocusEvents(active:true)
+    syntheticFocusTarget=(pid,identity)
+    for event in events { post(event) }
+    Thread.sleep(forTimeInterval:0.02)
 }
 
 private final class TargetedInput {
@@ -109,6 +153,10 @@ private final class TargetedInput {
     func run(_ action:[String:Any]) throws -> String {
         defer { release() }
         do {
+            if action["kind"] as? String == "key" { _=try targetedKeyCodes(action["keys"] as? [String] ?? []) }
+            try presentWindow(window,capture:false)
+            try check()
+            try enforceSyntheticFocus(window,post:post)
             switch action["kind"] as? String {
             case "click":try click(action)
             case "key":try pressKeys(action)
@@ -138,9 +186,7 @@ private final class TargetedInput {
     }
     func pressKeys(_ action:[String:Any]) throws {
         try checkKeyboardWindow()
-        let codes=try (action["keys"] as? [String] ?? []).map {name -> CGKeyCode in
-            guard let code=keycodes[name.lowercased()] else {throw failure("unsupported_key","Unsupported key \(name)")};return code
-        }
+        let codes=try targetedKeyCodes(action["keys"] as? [String] ?? [])
         for code in codes {try check();try checkKeyboardWindow();heldKeys.append(code);flags.formUnion(modifier(code));try key(code,true)}
         for code in codes.reversed() {flags.subtract(modifier(code));try key(code,false);heldKeys.removeLast()}
     }

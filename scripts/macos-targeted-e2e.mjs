@@ -106,14 +106,26 @@ try {
   const main = initial.window_id;
   record('One application opens through MCP in the background without preconfigured PID or foreground sentinel');
 
+  const beforeInvalid = await observe(main);
+  const invalid = await client.callTool({ name: 'computer_act', arguments: {
+    observation_id: beforeInvalid.id, action_id: 'unsupported-key', action: { kind: 'key', keys: ['not-a-key'] },
+  } });
+  assert.equal(invalid.isError, true);
+  assert.equal(invalid.structuredContent.state, 'rejected');
+  assert.equal(invalid.structuredContent.mechanism, 'none');
+  assert.match(invalid.structuredContent.message, /unsupported_key/);
+  assert.equal((await snapshot('target')).application_active, initial.application_active);
+  record('Unsupported key is rejected before synthetic focus or input dispatch, not reported as unknown');
+
   const before = await snapshot('target');
   await click(main, 'Fixture Increment', 'background-click');
   const after = await waitFor('target', value => value.count === before.count + 1, 'background button result');
+  assert.equal(after.application_active, true, 'Target did not receive synthetic AppKit activation');
   recordIsolationSample(before, after);
   record('Background window button changes oracle without activating or raising the target main window');
 
   await click(main, 'Fixture Input');
-  await act(await observe(main), { kind: 'key', keys: ['Command', 'a'] });
+  await act(await observe(main), { kind: 'key', keys: ['cmd', 'a'] });
   await act(await observe(main), { kind: 'key', keys: ['Backspace'] });
   await act(await observe(main), { kind: 'type_text', text: '后台中文 123' });
   const typed = await waitFor('target', value => value.text === '后台中文 123', 'background Unicode input');
@@ -162,6 +174,7 @@ try {
 
   const previousObservation = await observe(main);
   await call('computer_stop');
+  await waitFor('target', value => !value.application_active, 'synthetic activation released after stop');
   const nextSession = await call('computer_start');
   assert.notEqual(nextSession.helper_epoch, firstSession.helper_epoch);
   record('Explicit start after stop creates a new native helper epoch on the same MCP connection');

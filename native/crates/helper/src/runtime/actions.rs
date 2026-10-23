@@ -54,7 +54,7 @@ impl<B: Backend, L> Runtime<B, L> {
         let native = resolve_action(&observation, action)?;
         self.backend.validate(&observation.window)?;
         self.validate_elements(&observation, action)?;
-        if matches!(native, NativeAction::Semantic { .. }) {
+        if cfg!(target_os = "macos") || matches!(native, NativeAction::Semantic { .. }) {
             self.backend.preflight(&observation.window, &native)?;
         }
         cancelled(&self.cancel)?;

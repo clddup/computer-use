@@ -157,6 +157,10 @@ mod implementation {
                 json!({"method":"observe","window":window,"screenshot":screenshot,"accessibility":accessibility}),
             )
         }
+        fn preflight(&self, window: &Window, action: &NativeAction) -> Result<()> {
+            let _: bool = query(json!({"method":"preflight","window":window,"action":action}))?;
+            Ok(())
+        }
         fn perform(
             &self,
             window: &Window,

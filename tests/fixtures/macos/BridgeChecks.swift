@@ -29,9 +29,16 @@ struct BridgeChecks {
         expect(!isApplicationWindow(popup,regularPIDs:[99]))
         popup[kCGWindowAlpha as String]=0.0
         expect(!isApplicationWindow(popup,regularPIDs:[42]))
+        expect(isSharingIndicatorDescription("AXDialog",[("AXButton","WindowSharingSessionButton")]))
+        expect(!isSharingIndicatorDescription("AXDialog",[("AXButton","文字")]))
+        expect(!isSharingIndicatorDescription("AXDialog",[]))
+        expect(!isSharingIndicatorDescription("AXStandardWindow",[("AXButton","WindowSharingSessionButton")]))
         print("PASS nonzero-layer application popups without admitting system overlays")
     }
     static func targetedEvents() throws {
+        expect(try targetedKeyCodes(["cmd","n"]) == [55,45])
+        expect(try targetedKeyCodes(["Command","N"]) == [55,45])
+        rejects { _=try targetedKeyCodes(["command","not-a-key"]) }
         let window:[String:Any]=["id":"123","pid":Int32(42),"bounds":["x":-500,"y":20,"width":660,"height":540]]
         let cursor=CGEvent(source:nil)?.location
         for count in 1...3 {
@@ -54,6 +61,17 @@ struct BridgeChecks {
         expect(getLocation(scroll)==CGPoint(x:450,y:80))
         expect(CGEvent(source:nil)?.location==cursor)
         print("PASS targeted window IDs, click-state and screen coordinates without posting or moving the cursor")
+    }
+    static func focusNotifications() throws {
+        let events=try syntheticFocusEvents(active:true).map { NSEvent(cgEvent:$0)! }
+        expect(events.count==2)
+        expect(events[0].type.rawValue==13 && events[0].subtype.rawValue==1)
+        expect(events[1].type.rawValue==21 && events[1].subtype.rawValue==Int16(bitPattern:0x8000))
+        expect(events.allSatisfy {$0.windowNumber==0 && $0.modifierFlags.isEmpty})
+        let stopped=try syntheticFocusEvents(active:false)
+        expect(stopped.count==2 && NSEvent(cgEvent:stopped[0])!.subtype.rawValue==0x4000)
+        expect(NSEvent(cgEvent:stopped[1])!.subtype.rawValue==2)
+        print("PASS process-local activation, key-focus return and deactivation notifications without posting")
     }
     static func sharedFrames() throws {
         var buffer:CVPixelBuffer?
@@ -132,6 +150,7 @@ struct BridgeChecks {
         print("PASS finite integer bounds without trapping conversions")
 
         try targetedEvents()
+        try focusNotifications()
         try sharedFrames()
     }
 }

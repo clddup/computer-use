@@ -13,6 +13,7 @@ pub(super) struct State {
     pub activation_cancel: bool,
     pub activation_window: Option<Window>,
     pub perform_error: Option<Error>,
+    pub preflight_error: Option<Error>,
     pub elements: Vec<Element>,
     pub launches: usize,
     pub activations: usize,
@@ -122,7 +123,12 @@ impl Backend for FakeBackend {
         })
     }
     fn preflight(&self, window: &Window, _action: &NativeAction) -> Result<()> {
-        self.validate(window)
+        self.validate(window)?;
+        self.state
+            .borrow()
+            .preflight_error
+            .clone()
+            .map_or(Ok(()), Err)
     }
     fn perform(
         &self,

@@ -161,11 +161,12 @@ func presentWindow(_ window:[String:Any],capture:Bool) throws {
     let current=activePresentation
     if current?.window["id"] as? String != window["id"] as? String ||
        current?.window["process_identity"] as? String != window["process_identity"] as? String {
-        try closePresentation()
+        try releaseSyntheticFocus(unless:window)
+        try closePresentation(releaseFocus:false)
         if !presentationApplicationReady {
             _=NSApplication.shared
-            if NSApp.activationPolicy() == .prohibited { NSApp.setActivationPolicy(.accessory) }
-            NSApp.finishLaunching(); presentationApplicationReady=true
+            if NSApp.activationPolicy() != .accessory { NSApp.setActivationPolicy(.accessory) }
+            presentationApplicationReady=true
         }
         activePresentation=WindowPresentation(window)
     }
@@ -263,8 +264,9 @@ private func refreshPresentation(_ presentation:WindowPresentation) throws {
     }
 }
 
-func closePresentation() throws {
+func closePresentation(releaseFocus:Bool=true) throws {
     try requirePresentationThread()
+    if releaseFocus { try releaseSyntheticFocus() }
     guard let presentation=activePresentation else { return }
     activePresentation=nil
     presentation.panel?.orderOut(nil); presentation.panel?.close(); presentation.panel=nil

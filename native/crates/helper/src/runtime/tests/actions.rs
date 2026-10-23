@@ -37,6 +37,32 @@ fn unknown_dispatch_is_journaled_and_never_replayed() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn unsupported_key_preflight_is_rejected_without_dispatch() {
+    let (mut runtime, id) = setup(policy());
+    let observed = observation(&mut runtime, &id);
+    runtime.backend.state.borrow_mut().preflight_error =
+        Some(Error::new("unsupported_key", "Unsupported key not-a-key"));
+    let rejected = runtime
+        .handle(
+            Command::Act {
+                session_id: id.clone(),
+                action_id: "bad-key".into(),
+                observation_id: observed,
+                action: Action::Key {
+                    keys: vec!["not-a-key".into()],
+                },
+            },
+            MAX_VERSION,
+        )
+        .unwrap();
+    assert_eq!(rejected["state"], "rejected");
+    assert_eq!(runtime.backend.state.borrow().inputs, 0);
+    assert!(runtime.session.as_ref().unwrap().observation.is_some());
+    assert_eq!(runtime.action_status(&id, "bad-key").unwrap(), rejected);
+}
+
+#[test]
 fn consumed_and_superseded_observations_do_not_dispatch_input() {
     let (mut runtime, id) = setup(policy());
     let old = observation(&mut runtime, &id);

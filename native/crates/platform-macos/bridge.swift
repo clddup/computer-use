@@ -56,6 +56,7 @@ func isApplicationWindow(_ info:[String:Any], regularPIDs:Set<Int32>) -> Bool {
 }
 func listWindows() -> [[String: Any]] {
     let regularPIDs=Set(NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.map(\.processIdentifier))
+    var indicatorFrames:[Int32:[CGRect]]=[:]
     return windowInfos().compactMap { info in
         guard isApplicationWindow(info,regularPIDs:regularPIDs),
               let pid=info[kCGWindowOwnerPID as String] as? Int32,
@@ -64,9 +65,27 @@ func listWindows() -> [[String: Any]] {
               let data=info[kCGWindowBounds as String] as? [String:Any],
               let frame=CGRect(dictionaryRepresentation:data as CFDictionary), frame.width>0, frame.height>0,
               let identity=processIdentity(pid) else { return nil }
+        if indicatorFrames[pid]==nil {
+            let app=AXUIElementCreateApplication(pid); AXUIElementSetMessagingTimeout(app,0.25)
+            indicatorFrames[pid]=(attribute(app,kAXWindowsAttribute) as? [AXUIElement] ?? [])
+                .filter(isSharingIndicator).compactMap(axBounds)
+        }
+        guard !indicatorFrames[pid]!.contains(where:{sameWindowBounds($0,frame)}) else { return nil }
         return ["id":String(id), "pid":pid, "process_identity":identity,
                 "title":info[kCGWindowName as String] as? String ?? "", "bounds":rect(frame)]
     }
+}
+func isSharingIndicatorDescription(_ subrole:String,_ children:[(role:String,name:String)]) -> Bool {
+    subrole=="AXDialog" && children.count==1 && children[0].role=="AXButton" && children[0].name=="WindowSharingSessionButton"
+}
+private func isSharingIndicator(_ window:AXUIElement) -> Bool {
+    guard let children=attribute(window,kAXChildrenAttribute) as? [AXUIElement],children.count==1 else { return false }
+    return isSharingIndicatorDescription(attribute(window,kAXSubroleAttribute) as? String ?? "",children.map {
+        (attribute($0,kAXRoleAttribute) as? String ?? "",attribute($0,kAXTitleAttribute) as? String ?? attribute($0,kAXDescriptionAttribute) as? String ?? "")
+    })
+}
+func sameWindowBounds(_ lhs:CGRect,_ rhs:CGRect) -> Bool {
+    abs(lhs.minX-rhs.minX)<2 && abs(lhs.minY-rhs.minY)<2 && abs(lhs.width-rhs.width)<2 && abs(lhs.height-rhs.height)<2
 }
 func validate(_ window: [String: Any]) throws {
     try requireInteractiveDesktop()
@@ -96,7 +115,7 @@ func axWindow(_ window: [String: Any]) throws -> AXUIElement {
     let target=try bounds(window)
     let candidates=windows.filter { element in
         guard let b=axBounds(element) else { return false }
-        return abs(b.minX-target.minX)<2 && abs(b.minY-target.minY)<2 && abs(b.width-target.width)<2 && abs(b.height-target.height)<2
+        return sameWindowBounds(b,target)
     }
     guard !candidates.isEmpty else { throw failure("stale_window", "No AX window matches the current geometry; re-list and observe after the window settles") }
     guard candidates.count==1 else { throw failure("ambiguous_window", "More than one AX window matches the current geometry") }
@@ -254,6 +273,12 @@ private func query(_ request: [String: Any]) throws -> Any {
         return true
     }
     if method=="validate" { return true }
+    if method=="preflight" {
+        guard let action=request["action"] as? [String:Any] else { throw failure("invalid_params","Missing action") }
+        if action["kind"] as? String == "key" { _=try targetedKeyCodes(action["keys"] as? [String] ?? []) }
+        if action["kind"] as? String == "semantic" { throw failure("unsupported_action","UIA semantic actions are Windows-only") }
+        return true
+    }
     if method=="prepare" { return try prepare(window) }
     if method=="observe" {
         let elements=(request["accessibility"] as? Bool ?? false) ? try tree(window) : []
