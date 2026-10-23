@@ -18,6 +18,9 @@
     "test:macos:bridge": "node ../scripts/macos-bridge-checks.mjs",
     "test:gui:macos": "node ../scripts/macos-e2e.mjs",
     "test:gui:macos:smoke": "node ../scripts/macos-e2e.mjs --fixture-smoke",
+    "test:gui:macos:targeted": "node ../scripts/macos-targeted-e2e.mjs",
+    "test:gui:macos:presentation": "node ../scripts/macos-presentation-checks.mjs",
+    "test:gui:macos:shared-capture": "node ../scripts/macos-shared-capture-checks.mjs",
     "check": "pnpm build && pnpm protocol:check && pnpm typecheck && pnpm test",
     "mcp": "node packages/mcp/dist/main.js"
   },
