@@ -25,6 +25,7 @@ pub(crate) struct Runtime<B, L = DesktopLease> {
     session: Option<Session<L>>,
     started: bool,
     cancel: Arc<AtomicBool>,
+    interruption: Option<Error>,
 }
 
 impl<B: Backend, L> Runtime<B, L> {
@@ -42,6 +43,7 @@ impl<B: Backend, L> Runtime<B, L> {
             session: None,
             started: false,
             cancel,
+            interruption: None,
         }
     }
 
@@ -59,6 +61,18 @@ impl<B: Backend, L> Runtime<B, L> {
     }
 
     pub(crate) fn handle(&mut self, command: Command, version: u32) -> Result<Value> {
+        self.dispatch(command, version).map_err(|error| {
+            if error.code == "cancelled" {
+                if let Some(mut cause) = self.interruption.clone() {
+                    cause.may_have_executed |= error.may_have_executed;
+                    return cause;
+                }
+            }
+            error
+        })
+    }
+
+    fn dispatch(&mut self, command: Command, version: u32) -> Result<Value> {
         match command {
             Command::Capabilities {} => Ok(json!(self.capabilities(version))),
             Command::Start {} => self.start(),
@@ -87,6 +101,18 @@ impl<B: Backend, L> Runtime<B, L> {
             } => self.action_status(&session_id, &action_id),
             Command::Stop { session_id } => self.stop(&session_id),
         }
+    }
+
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn interrupt(&mut self, error: Error) {
+        if self.interruption.is_none() {
+            eprintln!(
+                "Control session interrupted: {}: {}",
+                error.code, error.message
+            );
+            self.interruption = Some(error);
+        }
+        self.cancel.store(true, Ordering::SeqCst);
     }
 
     fn capabilities(&self, version: u32) -> Capabilities {

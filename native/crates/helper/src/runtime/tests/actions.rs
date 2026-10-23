@@ -65,7 +65,7 @@ fn stop_releases_session_and_prevents_restart() {
             .handle(Command::Start {}, MAX_VERSION)
             .unwrap_err()
             .code,
-        "session_exists"
+        "cancelled"
     );
 }
 

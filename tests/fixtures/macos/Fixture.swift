@@ -72,8 +72,11 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private let commandURL: URL
     private var commandID = 0
     private var sentinel: NSWindow?
+    private var popup: NSPanel?
+    private var popupCount = 0
     private let multiline = NSTextView()
     private let title: String
+    private let background: Bool
     private var window: NSWindow!
     private let input = NSTextField()
     private let countLabel = NSTextField(labelWithString: "Count: 0")
@@ -84,10 +87,11 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var ready = false
     private var timer: Timer?
 
-    init(output: URL, title: String) {
+    init(output: URL, title: String, background: Bool = false) {
         self.output = output
         self.commandURL = output.deletingLastPathComponent().appendingPathComponent("command.json")
         self.title = title
+        self.background = background
         super.init()
     }
 
@@ -114,6 +118,10 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         countLabel.frame = NSRect(x: 220, y: 454, width: 200, height: 24)
         countLabel.setAccessibilityLabel("Fixture Count")
         content.addSubview(countLabel)
+        let openPopup = NSButton(title: "Fixture Open Popup", target: self, action: #selector(showPopup))
+        openPopup.frame = NSRect(x: 430, y: 450, width: 210, height: 32)
+        openPopup.bezelStyle = .rounded
+        content.addSubview(openPopup)
 
         let inputLabel = NSTextField(labelWithString: "Fixture Input")
         inputLabel.frame = NSRect(x: 20, y: 408, width: 150, height: 24)
@@ -165,8 +173,13 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         content.addSubview(drag)
 
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if background {
+            window.orderBack(nil)
+            window.makeKey()
+        } else {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         window.makeFirstResponder(input)
         ready = true
         saveOracle()
@@ -183,6 +196,25 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         count += 1
         countLabel.stringValue = "Count: \(count)"
     }
+
+    @objc private func showPopup() {
+        if popup == nil {
+            let panel = NSPanel(contentRect: NSRect(x: window.frame.minX + 100, y: window.frame.minY + 260, width: 260, height: 140),
+                                styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.title = "Fixture Popup"
+            panel.level = NSWindow.Level(rawValue: 24)
+            panel.isReleasedWhenClosed = false
+            panel.hidesOnDeactivate = false
+            let increment = NSButton(title: "Popup Increment", target: self, action: #selector(incrementPopup))
+            increment.frame = NSRect(x: 30, y: 45, width: 200, height: 40)
+            increment.bezelStyle = .rounded
+            panel.contentView?.addSubview(increment)
+            popup = panel
+        }
+        popup?.orderFrontRegardless()
+    }
+
+    @objc private func incrementPopup() { popupCount += 1 }
 
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField, field === input else { return }
@@ -241,14 +273,25 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let frame = window.frame
         // AppKit is bottom-left based; CG global coordinates start at the main display's top-left.
         let primaryTop = CGDisplayBounds(CGMainDisplayID()).height
+        let frontWindow = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], 0) as? [[String: Any]])?.first {
+            ($0[kCGWindowLayer as String] as? Int) == 0 &&
+                ($0[kCGWindowName as String] as? String) != "Computer Use agent pointer"
+        }
         let snapshot: [String: Any] = [
             "pid": ProcessInfo.processInfo.processIdentifier,
             "window_id": String(window.windowNumber),
             "count": count,
+            "popup_count": popupCount,
+            "popup_window_id": popup.map { String($0.windowNumber) } as Any? ?? NSNull(),
+            "popup_visible": popup?.isVisible ?? false,
             "text": text,
             "multiline_text": multiline.string,
             "command_id": commandID,
             "foreground_pid": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
+            "key_window_id": NSApp.keyWindow.map { String($0.windowNumber) } as Any? ?? NSNull(),
+            "front_window_id": (frontWindow?[kCGWindowNumber as String] as? UInt32).map(String.init) as Any? ?? NSNull(),
+            "pointer_x": CGEvent(source: nil)?.location.x ?? 0,
+            "pointer_y": CGEvent(source: nil)?.location.y ?? 0,
             "pointer_down": CGEventSource.buttonState(.combinedSessionState, button: .left),
             "mouse_down": drag.mouseDown,
             "down_count": drag.downCount,
@@ -281,15 +324,24 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     }
 }
 
-guard CommandLine.arguments.count == 3, !CommandLine.arguments[2].isEmpty else {
-    fputs("Usage: Fixture <oracle.json> <unique-window-title>\n", stderr)
-    exit(2)
+let arguments = Array(CommandLine.arguments.dropFirst())
+let outputPath: String
+let fixtureTitle: String
+let background: Bool
+if arguments.count == 2 || arguments.count == 3 && arguments[2] == "--background" {
+    outputPath = arguments[0]; fixtureTitle = arguments[1]; background = arguments.count == 3
+} else if arguments.isEmpty,
+          let path = Bundle.main.object(forInfoDictionaryKey: "CUFixtureOracle") as? String {
+    outputPath = path; fixtureTitle = "CU Background Fixture"; background = true
+} else {
+    fputs("Usage: Fixture <oracle.json> <unique-window-title> [--background]\n", stderr); exit(2)
 }
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let fixture = Fixture(
-    output: URL(fileURLWithPath: CommandLine.arguments[1]),
-    title: CommandLine.arguments[2]
+    output: URL(fileURLWithPath: outputPath),
+    title: fixtureTitle,
+    background: background
 )
 app.delegate = fixture
 app.run()

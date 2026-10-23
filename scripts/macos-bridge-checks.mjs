@@ -12,6 +12,9 @@ const executable = resolve(run, 'BridgeChecks');
 const target = process.arch === 'arm64' ? 'arm64-apple-macosx14.0' : 'x86_64-apple-macosx14.0';
 const built = spawnSync('xcrun', ['swiftc', '-parse-as-library', '-target', target,
   resolve(root, 'native/crates/platform-macos/bridge.swift'),
+  resolve(root, 'native/crates/platform-macos/input.swift'),
+  resolve(root, 'native/crates/platform-macos/presentation.swift'),
+  resolve(root, 'native/crates/platform-macos/capture.swift'),
   resolve(root, 'tests/fixtures/macos/BridgeChecks.swift'), '-o', executable], { encoding: 'utf8' });
 assert.equal(built.status, 0, built.stdout + built.stderr);
 const tested = spawnSync(executable, [], { encoding: 'utf8' });

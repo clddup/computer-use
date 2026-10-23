@@ -4,7 +4,14 @@ impl<B: Backend, L> Runtime<B, L> {
     pub(super) fn list_windows(&mut self, id: &str) -> Result<Value> {
         self.refresh_pending_apps(id)?;
         let mut windows = self.backend.list_windows()?;
+        let desktop = self.policy.desktop;
         let session = self.session(id)?;
+        if desktop {
+            session.processes = windows
+                .iter()
+                .map(|w| (w.pid, w.process_identity.clone()))
+                .collect();
+        }
         windows.retain(|w| session.processes.get(&w.pid) == Some(&w.process_identity));
         session.windows = windows.iter().map(|w| (w.id.clone(), w.clone())).collect();
         Ok(json!(windows))

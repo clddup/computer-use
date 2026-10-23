@@ -1,5 +1,55 @@
 use super::*;
 
+#[test]
+fn desktop_session_discovers_existing_and_new_windows_without_pid_configuration() {
+    let (mut runtime, id) = setup(crate::cli::load_policy(&[]).unwrap());
+    let mut other = window();
+    other.id = "new-window".into();
+    other.pid = 42;
+    other.process_identity = "42:new-process".into();
+    runtime
+        .backend
+        .state
+        .borrow_mut()
+        .windows
+        .push(other.clone());
+    let listed = runtime
+        .handle(
+            Command::ListWindows {
+                session_id: id.clone(),
+            },
+            MAX_VERSION,
+        )
+        .unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 2);
+    runtime
+        .handle(
+            Command::GetWindow {
+                session_id: id,
+                window: other,
+            },
+            MAX_VERSION,
+        )
+        .unwrap();
+}
+
+#[test]
+fn desktop_session_can_launch_an_application_without_a_preconfigured_profile() {
+    let (mut runtime, id) = setup(crate::cli::load_policy(&[]).unwrap());
+    runtime.backend.state.borrow_mut().launch_windows = vec![window()];
+    let launched = runtime
+        .handle(
+            Command::LaunchApp {
+                session_id: id,
+                app_id: "org.example.fixture".into(),
+            },
+            MAX_VERSION,
+        )
+        .unwrap();
+    assert_eq!(launched["state"], "ready");
+    assert_eq!(runtime.backend.state.borrow().launches, 1);
+}
+
 fn discover(runtime: &TestRuntime) {
     let mut state = runtime.backend.state.borrow_mut();
     state.apps = vec![Application {

@@ -17,6 +17,8 @@ pub(super) struct State {
     pub launches: usize,
     pub activations: usize,
     pub inputs: usize,
+    pub cleanups: usize,
+    pub cleanup_error: Option<Error>,
 }
 
 pub(super) struct FakeBackend {
@@ -31,6 +33,11 @@ impl Drop for FakeBackend {
 }
 
 impl Backend for FakeBackend {
+    fn end_session(&self) -> Result<()> {
+        let mut state = self.state.borrow_mut();
+        state.cleanups += 1;
+        state.cleanup_error.clone().map_or(Ok(()), Err)
+    }
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             protocol_version: MAX_VERSION,

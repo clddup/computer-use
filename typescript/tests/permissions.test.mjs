@@ -43,8 +43,12 @@ describe('macOS official system-permission flow (mocked; no application approval
     });
     await expect(ensureMacosPermissions(options, controller.signal)).rejects.toMatchObject({ code: 'stopped' });
   });
-  it('does not request OS permissions without a host policy or on another platform', async () => {
+  it('checks system permissions without requiring a host policy file', async () => {
+    execute.mockResolvedValue(status(true, true));
     await ensureMacosPermissions({ helperPath: '/fixture' }, signal());
+    expect(execute.mock.calls[0][1]).toEqual(['--permissions']);
+  });
+  it('does not request macOS permissions on another platform', async () => {
     vi.stubGlobal('process', { ...process, platform: 'linux' }); await ensureMacosPermissions(options, signal());
     expect(execute).not.toHaveBeenCalled();
   });

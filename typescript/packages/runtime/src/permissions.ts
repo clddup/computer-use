@@ -9,7 +9,8 @@ interface PermissionStatus {
   required: { accessibility: boolean; screen_recording: boolean };
 }
 async function probe(options: HelperOptions, request: boolean, signal: AbortSignal): Promise<PermissionStatus> {
-  const args = [request ? '--request-permissions' : '--permissions', '--policy', options.policyPath!];
+  const args = [request ? '--request-permissions' : '--permissions'];
+  if (options.policyPath) args.push('--policy', options.policyPath);
   let stdout: string;
   try {
     ({ stdout } = await execute(options.helperPath, args, { encoding: 'utf8', maxBuffer: 65_536, timeout: request ? 120_000 : 10_000, signal }));
@@ -28,7 +29,7 @@ function missing(status: PermissionStatus): string[] {
   return (['accessibility', 'screen_recording'] as const).filter(key => status.required[key] && !status[key]);
 }
 export async function ensureMacosPermissions(options: HelperOptions, signal: AbortSignal): Promise<void> {
-  if (process.platform !== 'darwin' || !options.policyPath) return;
+  if (process.platform !== 'darwin') return;
   if (!missing(await probe(options, false, signal)).length) return;
   await probe(options, true, signal);
   const remaining = missing(await probe(options, false, signal));

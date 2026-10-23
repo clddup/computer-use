@@ -47,7 +47,7 @@ function element(observation, name) {
 function target(observation, name) { return { kind: 'element', element_id: element(observation, name).id }; }
 function dispatched(outcome) {
   assert.equal(outcome.state, 'dispatched', outcome.message);
-  assert.equal(outcome.mechanism, 'coregraphics');
+  assert.equal(outcome.mechanism, 'coregraphics-targeted');
 }
 async function policyFile(name, overrides = {}) {
   const path = resolve(run, name);
@@ -120,7 +120,7 @@ try {
     assert.ok(!JSON.stringify(observation.elements).includes('FIXTURE-PASSWORD-DO-NOT-EXPOSE'));
     assert.equal(observation.images.length, 1);
     const image = observation.images[0];
-    assert.equal(image.capture_method, 'screencapturekit');
+    assert.equal(image.capture_method, 'screencapturekit-stream');
     assert.equal(Buffer.from(image.data, 'base64').subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
     await writeFile(resolve(run, 'window.png'), Buffer.from(image.data, 'base64'));
     record('AX tree, password redaction, and real ScreenCaptureKit PNG');
@@ -201,9 +201,14 @@ try {
     record('Explicit activation preserves geometry');
     await control('focus_other');
     observation = await observe(runtime);
-    dispatched(await runtime.act(observation.id, { kind: 'key', keys: ['Tab'] }));
+    const keyWindow = (await snapshot()).key_window_id;
+    const wrongKeyboardWindow = await runtime.act(observation.id, { kind: 'key', keys: ['Tab'] });
+    assert.notEqual(wrongKeyboardWindow.state, 'dispatched');
+    assert.match(wrongKeyboardWindow.message, /focus_changed/);
+    assert.equal((await snapshot()).key_window_id, keyWindow);
     assert.deepEqual((await mainWindow(runtime)).bounds, observation.window.bounds);
-    record('Physical input activates the selected background window without moving it');
+    record('Targeted keyboard input refuses another focused window rather than implicitly raising the selected one');
+    await control('focus_main');
 
     observation = await observe(runtime);
     const pending = runtime.act(observation.id, { kind: 'drag', from: target(observation, 'Fixture Drag Region'), to: target(observation, 'Fixture Drag Region'), duration_ms: 3000 });
@@ -243,7 +248,7 @@ try {
     assert.ok(Date.now() < deadline.expires_at_ms + 1500); await released('TTL input release'); await ttl.stop();
     record('Session TTL interrupts input independently and releases held state');
 
-    const denied = computer(); await assert.rejects(denied.start(), error => error.code === 'permission_denied'); await denied.stop();
+    const denied = computer(await policyFile('denied-policy.json', { allowed_pids: [] })); await assert.rejects(denied.start(), error => ['permission_denied', 'permissions_failed'].includes(error.code)); await denied.stop();
     const restricted = computer(await policyFile('restricted-policy.json', { allow_input: false, allow_screenshot: false }));
     await restricted.start(); const restrictedWindow = await mainWindow(restricted);
     await assert.rejects(restricted.observe(restrictedWindow), error => error.code === 'permission_denied');

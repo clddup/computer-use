@@ -3,8 +3,8 @@ import AppKit
 import ApplicationServices
 import ScreenCaptureKit
 
-private struct BridgeError: Error { let code: String; let message: String; var mayHaveExecuted=false }
-private func failure(_ code: String, _ message: String) -> BridgeError { BridgeError(code: code, message: message) }
+struct BridgeError: Error { let code: String; let message: String; var mayHaveExecuted=false }
+func failure(_ code: String, _ message: String) -> BridgeError { BridgeError(code: code, message: message) }
 func afterDispatch<T>(_ operation:() throws -> T) throws -> T {
     do { return try operation() }
     catch let error as BridgeError {
@@ -18,7 +18,7 @@ func bridgeFailureData(_ error:Error) -> [String:Any] {
 }
 private func now() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
 private func identifier() -> String { UUID().uuidString }
-private func rect(_ value: CGRect) -> [String: Any] { ["x": value.origin.x, "y": value.origin.y, "width": value.width, "height": value.height] }
+func rect(_ value: CGRect) -> [String: Any] { ["x": value.origin.x, "y": value.origin.y, "width": value.width, "height": value.height] }
 func bounds(_ value: [String: Any]) throws -> CGRect {
     guard let b = value["bounds"] as? [String: Any],
           let nx=b["x"] as? NSNumber, let ny=b["y"] as? NSNumber,
@@ -28,12 +28,19 @@ func bounds(_ value: [String: Any]) throws -> CGRect {
     guard x.isFinite, y.isFinite, w.isFinite, h.isFinite, w>0, h>0 else { throw failure("invalid_window", "Window bounds must be finite and positive") }
     return CGRect(x:x,y:y,width:w,height:h)
 }
-private func windowID(_ value: [String: Any]) throws -> CGWindowID {
+func windowID(_ value: [String: Any]) throws -> CGWindowID {
     guard let id = value["id"] as? String, let number=UInt32(id) else { throw failure("invalid_window", "Invalid window ID") }
     return number
 }
-private func windowInfos() -> [[String: Any]] {
+func windowInfos() -> [[String: Any]] {
     CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+}
+func requireInteractiveDesktop() throws {
+    let session=CGSessionCopyCurrentDictionary() as? [String:Any]
+    if (session?["CGSSessionScreenIsLocked"] as? Bool)==true ||
+       NSWorkspace.shared.frontmostApplication?.bundleIdentifier=="com.apple.loginwindow" {
+        throw failure("desktop_unavailable","The macOS desktop is locked or showing the login screen. The user must unlock it; do not capture or control the login screen")
+    }
 }
 func processIdentity(_ pid:Int32) -> String? {
     var info=proc_bsdinfo()
@@ -41,11 +48,19 @@ func processIdentity(_ pid:Int32) -> String? {
     guard proc_pidinfo(pid,PROC_PIDTBSDINFO,0,&info,size)==size else { return nil }
     return "\(pid):\(info.pbi_start_tvsec):\(info.pbi_start_tvusec)"
 }
-private func listWindows() -> [[String: Any]] {
-    windowInfos().compactMap { info in
-        guard (info[kCGWindowLayer as String] as? Int) == 0,
+func isApplicationWindow(_ info:[String:Any], regularPIDs:Set<Int32>) -> Bool {
+    guard let layer=info[kCGWindowLayer as String] as? Int,
+          let pid=info[kCGWindowOwnerPID as String] as? Int32,
+          (info[kCGWindowAlpha as String] as? Double ?? 1)>0 else { return false }
+    return layer==0 || layer>0 && regularPIDs.contains(pid)
+}
+func listWindows() -> [[String: Any]] {
+    let regularPIDs=Set(NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.map(\.processIdentifier))
+    return windowInfos().compactMap { info in
+        guard isApplicationWindow(info,regularPIDs:regularPIDs),
               let pid=info[kCGWindowOwnerPID as String] as? Int32,
               let id=info[kCGWindowNumber as String] as? UInt32,
+              !isPresentationWindow(id),
               let data=info[kCGWindowBounds as String] as? [String:Any],
               let frame=CGRect(dictionaryRepresentation:data as CFDictionary), frame.width>0, frame.height>0,
               let identity=processIdentity(pid) else { return nil }
@@ -53,14 +68,15 @@ private func listWindows() -> [[String: Any]] {
                 "title":info[kCGWindowName as String] as? String ?? "", "bounds":rect(frame)]
     }
 }
-private func validate(_ window: [String: Any]) throws {
+func validate(_ window: [String: Any]) throws {
+    try requireInteractiveDesktop()
     let id=try windowID(window)
     guard let current=listWindows().first(where: { ($0["id"] as? String)==String(id) }),
           (current["pid"] as? Int32)==(window["pid"] as? Int32),
           (current["process_identity"] as? String)==(window["process_identity"] as? String),
           try bounds(current)==bounds(window) else { throw failure("stale_window", "Window identity or geometry changed") }
 }
-private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var result: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element,name as CFString,&result) == .success else { return nil }
     return result
@@ -72,7 +88,7 @@ private func axBounds(_ element: AXUIElement) -> CGRect? {
     guard AXValueGetValue(p as! AXValue,.cgPoint,&point), AXValueGetValue(s as! AXValue,.cgSize,&size) else { return nil }
     return CGRect(origin:point,size:size)
 }
-private func axWindow(_ window: [String: Any]) throws -> AXUIElement {
+func axWindow(_ window: [String: Any]) throws -> AXUIElement {
     try requireAccessibility()
     guard let pid=window["pid"] as? Int32 else { throw failure("invalid_window", "Missing PID") }
     let app=AXUIElementCreateApplication(pid); AXUIElementSetMessagingTimeout(app,0.25)
@@ -82,7 +98,8 @@ private func axWindow(_ window: [String: Any]) throws -> AXUIElement {
         guard let b=axBounds(element) else { return false }
         return abs(b.minX-target.minX)<2 && abs(b.minY-target.minY)<2 && abs(b.width-target.width)<2 && abs(b.height-target.height)<2
     }
-    guard candidates.count==1 else { throw failure("ambiguous_window", "AX window association is not unique") }
+    guard !candidates.isEmpty else { throw failure("stale_window", "No AX window matches the current geometry; re-list and observe after the window settles") }
+    guard candidates.count==1 else { throw failure("ambiguous_window", "More than one AX window matches the current geometry") }
     return candidates[0]
 }
 private func tree(_ window: [String: Any]) throws -> [[String: Any]] {
@@ -104,15 +121,15 @@ private func tree(_ window: [String: Any]) throws -> [[String: Any]] {
     }
     return elements
 }
-private func requireAccessibility() throws {
+func requireAccessibility() throws {
     guard AXIsProcessTrusted() else { throw failure("permission_denied", "Accessibility permission must be granted by the user in System Settings") }
 }
 private func isForeground(_ window: [String:Any]) throws -> Bool {
     let id=try windowID(window)
     guard let pid=window["pid"] as? Int32,
           NSWorkspace.shared.frontmostApplication?.processIdentifier==pid,
-          let first=windowInfos().first(where:{($0[kCGWindowLayer as String] as? Int)==0 && ($0[kCGWindowOwnerPID as String] as? Int32)==pid}) else { return false }
-    return (first[kCGWindowNumber as String] as? UInt32)==id
+          let first=listWindows().first(where:{($0["pid"] as? Int32)==pid}) else { return false }
+    return (first["id"] as? String)==String(id)
 }
 func captureSize(_ frame:CGRect) throws -> (Int,Int) {
     let width=(frame.width*2).rounded(.up),height=(frame.height*2).rounded(.up)
@@ -127,46 +144,65 @@ func boundedInteger(_ value:Double,_ minimum:Int,_ maximum:Int) throws -> Int {
     }
     return Int(value)
 }
-func pointerEvent(_ type:CGEventType,_ button:CGMouseButton,_ position:CGPoint,_ clickState:Int64=1) throws -> CGEvent {
-    guard let event=CGEvent(mouseEventSource:nil,mouseType:type,mouseCursorPosition:position,mouseButton:button) else {
-        throw failure("input_failed", "Cannot allocate pointer event")
-    }
-    event.setIntegerValueField(.mouseEventClickState,value:clickState)
-    return event
+private func applicationURL(_ target:String) throws -> URL {
+    let url:URL?
+    if target.hasPrefix("/") {
+        url=URL(fileURLWithPath:target).standardizedFileURL.resolvingSymlinksInPath()
+    } else { url=NSWorkspace.shared.urlForApplication(withBundleIdentifier:target) }
+    guard let url, url.pathExtension=="app", let bundle=Bundle(url:url),
+          bundle.executableURL != nil else { throw failure("application_not_found", "Use an installed application's bundle identifier or absolute .app path") }
+    return url
 }
-private func capture(_ window: [String: Any]) throws -> [String: Any] {
-    guard CGPreflightScreenCaptureAccess() else { throw failure("permission_denied", "Screen Recording permission must be granted by the user") }
-    let id=try windowID(window); let frame=try bounds(window)
-    let (pixelWidth,pixelHeight)=try captureSize(frame)
-    let semaphore=DispatchSemaphore(value:0)
-    let box=CaptureBox()
-    let task=Task {
-        do {
-            let content=try await SCShareableContent.excludingDesktopWindows(false,onScreenWindowsOnly:true)
-            guard let target=content.windows.first(where:{$0.windowID==id}) else { throw failure("invalid_window", "Window is not capturable") }
-            try Task.checkCancellation()
-            let filter=SCContentFilter(desktopIndependentWindow:target)
-            let configuration=SCStreamConfiguration()
-            configuration.width=pixelWidth; configuration.height=pixelHeight
-            configuration.showsCursor=false
-            configuration.ignoreShadowsSingleWindow=true
-            configuration.scalesToFit=true
-            let image=try await SCScreenshotManager.captureImage(contentFilter:filter,configuration:configuration)
-            try Task.checkCancellation()
-            guard image.width*image.height<=16_000_000,
-                  let data=NSBitmapImageRep(cgImage:image).representation(using:.png,properties:[:]),data.count<=9_000_000 else { throw failure("capture_limit", "Capture exceeds size limit") }
-            box.result = .success(["id":identifier(),"mime_type":"image/png","data":data.base64EncodedString(),"width":image.width,"height":image.height,"screen_bounds":rect(frame),"capture_method":"screencapturekit"])
-        } catch { box.result = .failure(error) }
-        semaphore.signal()
+private func listApplications(_ profiles:[[String:Any]]) throws -> [[String:Any]] {
+    let windows=listWindows()
+    let running=NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+    if profiles.isEmpty {
+        return running.compactMap { app in
+            guard let path=app.bundleURL?.path else { return nil }
+            return ["id":app.bundleIdentifier ?? path,"display_name":app.localizedName ?? path,"is_running":true,
+                    "windows":windows.filter { ($0["pid"] as? Int32)==app.processIdentifier }]
+        }
     }
-    guard semaphore.wait(timeout:.now()+8) == .success, let result=box.result else {
-        task.cancel()
-        throw failure("capture_timeout", "ScreenCaptureKit timed out")
+    return try profiles.map { profile in
+        guard let id=profile["id"] as? String, let target=profile["executable"] as? String else { throw failure("invalid_params", "Invalid application profile") }
+        let url=try applicationURL(target)
+        let app=running.first { $0.bundleURL?.standardizedFileURL.resolvingSymlinksInPath()==url }
+        return ["id":id,"display_name":profile["display_name"] as? String ?? id,"is_running":app != nil,
+                "windows":app.map { app in windows.filter { ($0["pid"] as? Int32)==app.processIdentifier } } ?? []]
     }
-    return try result.get()
 }
-private final class CaptureBox: @unchecked Sendable { var result: Result<[String:Any],Error>? }
+private final class ApplicationLaunchBox: @unchecked Sendable {
+    var app:NSRunningApplication?
+    var error:Error?
+}
+private func launchApplication(_ profile:[String:Any]) throws -> [[String:Any]] {
+    guard let target=profile["executable"] as? String,
+          let args=profile["args"] as? [String] else { throw failure("invalid_params", "Invalid application launch") }
+    let url=try applicationURL(target)
+    let config=NSWorkspace.OpenConfiguration()
+    config.arguments=args
+    config.activates=false
+    config.createsNewApplicationInstance=false
+    let box=ApplicationLaunchBox()
+    return try afterDispatch {
+        NSWorkspace.shared.openApplication(at:url,configuration:config) { app,error in
+            box.app=app; box.error=error
+        }
+        let deadline=ProcessInfo.processInfo.systemUptime+3
+        repeat {
+            RunLoop.current.run(until:Date().addingTimeInterval(0.02))
+            if let error=box.error { throw error }
+            if let app=box.app {
+                let windows=listWindows().filter { ($0["pid"] as? Int32)==app.processIdentifier }
+                if !windows.isEmpty { return windows }
+            }
+        } while ProcessInfo.processInfo.systemUptime<deadline
+        return []
+    }
+}
 private func prepare(_ window:[String:Any]) throws -> Bool {
+    try requireAccessibility()
+    if try isForeground(window) { return true }
     let element=try axWindow(window)
     guard let pid=window["pid"] as? Int32, let app=NSRunningApplication(processIdentifier:pid) else { throw failure("invalid_window", "Application exited") }
     return try afterDispatch {
@@ -183,6 +219,13 @@ private func prepare(_ window:[String:Any]) throws -> Bool {
 }
 private func query(_ request: [String: Any]) throws -> Any {
     let method=request["method"] as? String ?? ""
+    if method=="presentation_error" { return presentationInterruptionError().map(bridgeFailureData) as Any? ?? NSNull() }
+    if method=="close_presentation" { try closePresentation(); return true }
+    if method=="list_apps" { return try listApplications(request["apps"] as? [[String:Any]] ?? []) }
+    if method=="launch_app" {
+        guard let app=request["app"] as? [String:Any] else { throw failure("invalid_params", "Missing application") }
+        return try launchApplication(app)
+    }
     if method=="permissions" {
         let requestAccessibility=request["request_accessibility"] as? Bool ?? false
         let requestScreenRecording=request["request_screen_recording"] as? Bool ?? false
@@ -196,104 +239,37 @@ private func query(_ request: [String: Any]) throws -> Any {
         return ["accessibility":accessibility,"screen_recording":CGPreflightScreenCaptureAccess()]
     }
     if method=="capabilities" {
-        return ["protocol_version":1,"platform":"macos","backend":"ax-screencapturekit-coregraphics","available":AXIsProcessTrusted(),
-                "reason":AXIsProcessTrusted() ? NSNull() : "Accessibility permission is missing" as Any,
-                "actions":["activate_window","click","type_text","key","scroll","drag"],"screenshot_methods":["screencapturekit"],
-                "limitations":["macOS 14+; Accessibility and Screen Recording permissions are separate","Only visible windows with unambiguous AX association; no set_value","Input requires selected foreground window; no protected desktop"]]
+        let desktopAvailable=(try? requireInteractiveDesktop()) != nil
+        let reason:Any = !desktopAvailable ? "The macOS desktop is locked or showing the login screen" : AXIsProcessTrusted() ? NSNull() as Any : "Accessibility permission is missing" as Any
+        return ["protocol_version":1,"platform":"macos","backend":"ax-screencapturekit-coregraphics","available":AXIsProcessTrusted() && desktopAvailable,
+                "reason":reason,
+                "actions":["activate_window","click","type_text","key","scroll","drag"],"screenshot_methods":["screencapturekit-stream"],
+                "limitations":["macOS 14+; Accessibility and Screen Recording permissions are separate","Visible windows and application popups require unambiguous AX association; no set_value","Window-targeted input uses dynamically resolved CGEventSetWindowLocation; no global HID fallback","An independent pointer does not guarantee isolated keyboard focus in every application"]]
     }
     if method=="list" { return listWindows() }
     guard let window=request["window"] as? [String:Any] else { throw failure("invalid_params", "Missing window") }
     try validate(window)
+    if method=="present" {
+        try presentWindow(window,capture:request["screenshot"] as? Bool ?? false)
+        return true
+    }
     if method=="validate" { return true }
     if method=="prepare" { return try prepare(window) }
     if method=="observe" {
         let elements=(request["accessibility"] as? Bool ?? false) ? try tree(window) : []
-        let images=(request["screenshot"] as? Bool ?? false) ? [try capture(window)] : []
+        let images=(request["screenshot"] as? Bool ?? false) ? [try captureSharedWindow(window)] : []
         try validate(window); let timestamp=now()
+        var warnings=["AX traversal is bounded; AX and capture are not an atomic snapshot"]
+        if let front=listWindows().first(where:{($0["pid"] as? Int32)==(window["pid"] as? Int32)}),
+           let id=front["id"] as? String, id != window["id"] as? String {
+            warnings.append("Another application window is in front (id \(id)). Window-only screenshots exclude separate popups. Call computer_list_windows and observe that window before interacting with it.")
+        }
         return ["id":identifier(),"helper_epoch":"","window":window,"captured_at_ms":timestamp,"expires_at_ms":timestamp+30_000,
-                "elements":elements,"images":images,"warnings":["AX traversal is bounded; AX and capture are not an atomic snapshot"]]
+                "elements":elements,"images":images,"warnings":warnings]
     }
     throw failure("invalid_params", "Unknown bridge query")
 }
 
-private let keycodes:[String:CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"l":37,"j":38,"k":40,"n":45,"m":46,"enter":36,"return":36,"tab":48,"space":49,"backspace":51,"escape":53,"esc":53,"meta":55,"command":55,"shift":56,"alt":58,"control":59,"ctrl":59,"left":123,"right":124,"down":125,"up":126,"delete":117,"home":115,"end":119,"pageup":116,"pagedown":121]
-private func modifier(_ code:CGKeyCode)->CGEventFlags { switch code { case 55:return .maskCommand; case 56:return .maskShift;case 58:return .maskAlternate;case 59:return .maskControl;default:return [] } }
-private func perform(_ request:[String:Any],_ context:UnsafeRawPointer?,_ cancelled:@convention(c)(UnsafeRawPointer?)->Int32) throws -> String {
-    guard let window=request["window"] as? [String:Any],let action=request["action"] as? [String:Any],let kind=action["kind"] as? String,
-          window["pid"] as? Int32 != nil else { throw failure("invalid_params", "Missing input arguments") }
-    if kind=="set_value" { throw failure("unsupported_action", "Use focus and type_text on macOS") }
-    func check() throws {
-        if cancelled(context) != 0 { throw failure("cancelled", "Session stopped") }
-        try requireAccessibility()
-        try validate(window)
-        guard try isForeground(window) else { throw failure("focus_changed", "Selected window is not foreground") }
-    }
-    try check()
-    let physical=CGEventSource.flagsState(.combinedSessionState)
-    if !physical.intersection([.maskCommand,.maskShift,.maskControl,.maskAlternate]).isEmpty { throw failure("user_input_active", "Release physically held modifiers") }
-    var heldKeys:[CGKeyCode]=[];var flags:CGEventFlags=[];var heldMouse:CGMouseButton?=nil;var position=CGPoint.zero
-    func key(_ code:CGKeyCode,_ down:Bool,_ text:String?=nil) throws {
-        guard let event=CGEvent(keyboardEventSource:nil,virtualKey:code,keyDown:down) else { throw failure("input_failed", "Cannot allocate keyboard event") }
-        event.flags=flags
-        if let text=text {let units=Array(text.utf16);units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength:units.count,unicodeString:$0.baseAddress!) }}
-        event.post(tap:.cghidEventTap)
-    }
-    func mouse(_ type:CGEventType,_ button:CGMouseButton,_ p:CGPoint,_ clickState:Int64=1) throws {
-        try pointerEvent(type,button,p,clickState).post(tap:.cghidEventTap)
-    }
-    defer {
-        for code in heldKeys.reversed() { flags.subtract(modifier(code)); try? key(code,false) }
-        if let button=heldMouse { try? mouse(button == .left ? .leftMouseUp : button == .right ? .rightMouseUp : .otherMouseUp,button,position) }
-    }
-    func move(_ x:Double,_ y:Double,_ dragged:Bool=false) throws {
-        try check();let point=CGPoint(x:x,y:y)
-        guard try bounds(window).contains(point) else { throw failure("out_of_bounds", "Pointer outside window") }
-        let system=AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system,0.25)
-        var hit:AXUIElement?
-        guard AXUIElementCopyElementAtPosition(system,Float(point.x),Float(point.y),&hit) == .success,
-              let hit=hit else { throw failure("target_occluded", "Cannot determine the accessibility target at pointer position") }
-        var hitPID:Int32=0
-        guard AXUIElementGetPid(hit,&hitPID) == .success,hitPID==(window["pid"] as? Int32) else {
-            throw failure("target_occluded", "Pointer target belongs to another application")
-        }
-        let hitWindow=attribute(hit,kAXWindowAttribute).flatMap { value -> AXUIElement? in
-            CFGetTypeID(value)==AXUIElementGetTypeID() ? (value as! AXUIElement) : nil
-        } ?? hit
-        guard CFEqual(hitWindow,try axWindow(window)) else { throw failure("target_occluded", "Pointer target belongs to another window") }
-        position=point;try mouse(dragged ? .leftMouseDragged : .mouseMoved,.left,point)
-    }
-    func number(_ name:String)->Double { action[name] as? Double ?? 0 }
-    switch kind {
-    case "click":
-        try move(number("x"),number("y"));let name=action["button"] as? String ?? "left"
-        let button:CGMouseButton=name=="right" ? .right : name=="middle" ? .center : .left
-        let count=try boundedInteger(number("click_count"),1,3)
-        for index in 1...count {
-            try check(); heldMouse=button;try mouse(button == .left ? .leftMouseDown : button == .right ? .rightMouseDown : .otherMouseDown,button,position,Int64(index))
-            try mouse(button == .left ? .leftMouseUp : button == .right ? .rightMouseUp : .otherMouseUp,button,position,Int64(index));heldMouse=nil
-            if count > 1 { Thread.sleep(forTimeInterval:0.02) }
-        }
-    case "type_text":
-        for character in action["text"] as? String ?? "" { try check();heldKeys.append(0);try key(0,true,String(character));try key(0,false,String(character));heldKeys.removeLast() }
-    case "key":
-        let names=action["keys"] as? [String] ?? []
-        let codes=try names.map { name -> CGKeyCode in guard let code=keycodes[name.lowercased()] else { throw failure("unsupported_key", "Unsupported key \(name)") };return code }
-        for code in codes {try check();heldKeys.append(code);flags.formUnion(modifier(code));try key(code,true)}
-        for code in codes.reversed() {flags.subtract(modifier(code));try key(code,false);heldKeys.removeLast()}
-    case "scroll":
-        let dx=try boundedInteger(number("dx"),-20,20),dy=try boundedInteger(number("dy"),-20,20)
-        try move(number("x"),number("y"));guard let event=CGEvent(scrollWheelEvent2Source:nil,units:.line,wheelCount:2,wheel1:-Int32(dy),wheel2:-Int32(dx),wheel3:0) else { throw failure("input_failed", "Cannot allocate scroll event") };event.location=position;event.post(tap:.cghidEventTap)
-    case "drag":
-        let duration=try boundedInteger(number("duration_ms"),50,3000)
-        try move(number("from_x"),number("from_y"));heldMouse = .left;try mouse(.leftMouseDown,.left,position)
-        let steps=duration/10
-        for step in 1...steps { let t=Double(step)/Double(steps);try move(number("from_x")+(number("to_x")-number("from_x"))*t,number("from_y")+(number("to_y")-number("from_y"))*t,true);Thread.sleep(forTimeInterval:0.01) }
-        try mouse(.leftMouseUp,.left,position);heldMouse=nil
-    default: throw failure("unsupported_action", "Unknown input action")
-    }
-    return "coregraphics"
-}
 private func dispatch(_ input:UnsafePointer<CChar>,_ operation:([String:Any]) throws -> Any)->UnsafeMutablePointer<CChar>? {
     let response:[String:Any]
     do { let data=Data(String(cString:input).utf8);guard let request=try JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw failure("invalid_params", "Invalid JSON request") };response=["result":try operation(request)] }
@@ -303,4 +279,12 @@ private func dispatch(_ input:UnsafePointer<CChar>,_ operation:([String:Any]) th
 }
 @_cdecl("cu_macos_query") public func cuMacosQuery(_ input:UnsafePointer<CChar>)->UnsafeMutablePointer<CChar>? { dispatch(input,query) }
 @_cdecl("cu_macos_perform") public func cuMacosPerform(_ input:UnsafePointer<CChar>,_ context:UnsafeRawPointer?,_ cancelled:@convention(c)(UnsafeRawPointer?)->Int32)->UnsafeMutablePointer<CChar>? { dispatch(input) { try perform($0,context,cancelled) } }
+@_cdecl("cu_macos_capture") public func cuMacosCapture(_ input:UnsafePointer<CChar>,_ context:UnsafeRawPointer?,_ cancelled:@convention(c)(UnsafeRawPointer?)->Int32)->UnsafeMutablePointer<CChar>? {
+    dispatch(input) { try captureSharedWindow($0,cancelled:{cancelled(context) != 0}) }
+}
 @_cdecl("cu_macos_free") public func cuMacosFree(_ value:UnsafeMutablePointer<CChar>) { free(value) }
+@_cdecl("cu_macos_maintain") public func cuMacosMaintain(_ cancelled:Int32) -> Int32 {
+    maintainPresentation(cancelled:cancelled != 0)
+    return presentationWasInterrupted() ? 1:0
+}
+@_cdecl("cu_macos_is_presentation_window") public func cuMacosIsPresentationWindow(_ id:UInt32) -> Int32 { isPresentationWindow(id) ? 1:0 }

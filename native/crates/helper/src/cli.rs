@@ -31,7 +31,11 @@ pub(crate) fn run_mode(args: &[String]) -> Result<bool> {
 #[cfg(target_os = "macos")]
 fn permission_mode(args: &[String]) -> Result<()> {
     let policy = load_policy(&args[1..])?;
-    if args.len() > 1 && policy.allowed_pids.is_empty() && policy.allowed_apps.is_empty() {
+    if !policy.desktop
+        && args.len() > 1
+        && policy.allowed_pids.is_empty()
+        && policy.allowed_apps.is_empty()
+    {
         return Err(Error::new(
             "permission_denied",
             "Host policy has no approved PIDs or applications",
@@ -58,7 +62,7 @@ fn validate_protocol() -> Result<()> {
 
 pub(crate) fn load_policy(args: &[String]) -> Result<Policy> {
     match args {
-        [] => Ok(Policy::default()),
+        [] => Ok(Policy::desktop()),
         [flag, path] if flag == "--policy" => {
             let metadata =
                 std::fs::metadata(path).map_err(|e| Error::new("policy_error", e.to_string()))?;

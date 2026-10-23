@@ -27,12 +27,23 @@ impl WorkerBackend {
 }
 
 impl Backend for WorkerBackend {
+    fn end_session(&self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        cu_platform_macos::close_presentation()?;
+        Ok(())
+    }
     fn capabilities(&self) -> Capabilities {
         backend().capabilities()
     }
 
     fn list_windows(&self) -> Result<Vec<Window>> {
-        self.query(Probe::List)
+        let windows: Vec<Window> = self.query(Probe::List)?;
+        #[cfg(target_os = "macos")]
+        let windows = windows
+            .into_iter()
+            .filter(|window| !cu_platform_macos::is_presentation_window(&window.id))
+            .collect();
+        Ok(windows)
     }
 
     fn list_apps(&self, apps: &[ApplicationPolicy]) -> Result<Vec<Application>> {
@@ -56,11 +67,21 @@ impl Backend for WorkerBackend {
         screenshot: bool,
         accessibility: bool,
     ) -> Result<Observation> {
-        self.query(Probe::Observe {
+        let observation: Observation = self.query(Probe::Observe {
             window: window.clone(),
-            screenshot,
+            screenshot: screenshot && !cfg!(target_os = "macos"),
             accessibility,
-        })
+        })?;
+        #[cfg(target_os = "macos")]
+        let observation = {
+            let mut observation = observation;
+            cu_platform_macos::present(window, screenshot)?;
+            if screenshot {
+                observation.images = vec![cu_platform_macos::capture(window, &self.cancel)?];
+            }
+            observation
+        };
+        Ok(observation)
     }
 
     fn validate(&self, window: &Window) -> Result<()> {
@@ -92,6 +113,7 @@ impl Backend for WorkerBackend {
                 execute: true,
             })
         } else {
+            #[cfg(not(target_os = "macos"))]
             query(
                 Probe::Prepare {
                     window: window.clone(),

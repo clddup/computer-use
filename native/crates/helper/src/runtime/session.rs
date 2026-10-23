@@ -38,10 +38,10 @@ impl<B: Backend, L> Runtime<B, L> {
             .backend
             .list_windows()?
             .into_iter()
-            .filter(|w| self.policy.allowed_pids.contains(&w.pid))
+            .filter(|w| self.policy.desktop || self.policy.allowed_pids.contains(&w.pid))
             .map(|w| (w.pid, w.process_identity))
             .collect();
-        if processes.is_empty() && self.policy.allowed_apps.is_empty() {
+        if !self.policy.desktop && processes.is_empty() && self.policy.allowed_apps.is_empty() {
             return Err(Error::new(
                 "permission_denied",
                 "No visible approved process windows and no approved launch profile",
@@ -66,14 +66,17 @@ impl<B: Backend, L> Runtime<B, L> {
     }
 
     fn check_start(&self) -> Result<()> {
+        cancelled(&self.cancel)?;
         if self.started {
             return Err(Error::new(
                 "session_exists",
                 "One session per helper; restart the helper to start again",
             ));
         }
-        cancelled(&self.cancel)?;
-        if self.policy.allowed_pids.is_empty() && self.policy.allowed_apps.is_empty() {
+        if !self.policy.desktop
+            && self.policy.allowed_pids.is_empty()
+            && self.policy.allowed_apps.is_empty()
+        {
             return Err(Error::new(
                 "permission_denied",
                 "Host policy has no approved PIDs or applications",
@@ -100,6 +103,7 @@ impl<B: Backend, L> Runtime<B, L> {
         self.cancel.store(true, Ordering::SeqCst);
         // Dispatch is serial: all native input guards have dropped before the lease.
         self.session = None;
+        self.backend.end_session()?;
         Ok(json!({"stopped":true,"helper_epoch":self.epoch}))
     }
 }

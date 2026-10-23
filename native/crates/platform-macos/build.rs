@@ -1,5 +1,8 @@
 fn main() {
     println!("cargo:rerun-if-changed=bridge.swift");
+    println!("cargo:rerun-if-changed=input.swift");
+    println!("cargo:rerun-if-changed=presentation.swift");
+    println!("cargo:rerun-if-changed=capture.swift");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
@@ -21,7 +24,15 @@ fn main() {
                 .unwrap()
                 .replace("aarch64", "arm64")
         ))
-        .args(["bridge.swift", "-module-name", "CuMacosBridge", "-o"])
+        .args([
+            "bridge.swift",
+            "input.swift",
+            "presentation.swift",
+            "capture.swift",
+            "-module-name",
+            "CuMacosBridge",
+            "-o",
+        ])
         .arg(out.join("libcu_macos_bridge.dylib"))
         .args([
             "-Xlinker",
