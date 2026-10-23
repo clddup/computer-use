@@ -45,6 +45,28 @@ pnpm --dir typescript build
 
 Windows 的 pnpm 配置使用 hoisted + injected workspace packages，且禁止 injected-dependency 去重回 junction；这是本机 Node 无法正常解析 junction 的兼容措施，不要随意删掉这些设置。
 
+### macOS release 打包
+
+```sh
+pnpm --dir typescript package:macos
+# 指定其他输出目录：
+pnpm --dir typescript package:macos --out-dir /absolute/path/app-use
+```
+
+默认生成被 Git 忽略的 `dist/app-use/`，包含 `native/cu-helper`、同目录的 Swift bridge、`mcp/dist/` 及生产依赖、构建信息 `manifest.json` 和配置示例 `mcp.json`。需要事先安装项目依赖及上述构建工具；运行时仍需要 Node 24.14.x，不内置 Node。
+
+脚本只构建 release，依据 Cargo 报告选择实际产物；清除编译缓存的动态库搜索路径，重新进行 ad-hoc 签名，移动暂存目录后验证依赖未链接到包外及真实 native MCP 连接。验证成功才替换旧包，不覆盖没有本项目 manifest 的目录，不改用户配置或请求系统权限。MCP 的打包入口默认使用包内 helper，缺少该二进制时不会偷偷回退到 debug；`--helper` / `CU_HELPER` 仍可显式覆盖。
+
+将生成的 `mcp.json` 中 `app-use` 条目用于用户级 MCP 配置，重新连接后生效；已有进程不会热更新。移动整个目录后需要更新配置中的绝对路径。**release 优化不等于 Developer ID 签名**：当前为 ad-hoc 签名，源码变化后不能保证 TCC 授权沿用，脚本不会重置 TCC 或修改权限。
+
+使用打包产物验收单应用后台输入（仅在已有 AX 授权且桌面解锁时运行）：
+
+```sh
+CU_HELPER="$PWD/dist/app-use/native/cu-helper" \
+CU_MCP="$PWD/dist/app-use/mcp/dist/main.js" \
+pnpm --dir typescript test:gui:macos:targeted --popup
+```
+
 ### Windows 真实 GUI 验收
 
 在**已登录、未锁屏的交互桌面**运行；期间不要操作鼠标键盘：

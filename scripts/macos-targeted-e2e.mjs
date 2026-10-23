@@ -16,6 +16,7 @@ const executable = resolve(appPath, 'Contents/MacOS/Fixture');
 const escapedOracle = resolve(run, 'target/oracle.json').replaceAll('&', '&amp;').replaceAll('<', '&lt;');
 await writeFile(resolve(appPath, 'Contents/Info.plist'), `<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.independent-cu.background-fixture</string><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>CUFixtureOracle</key><string>${escapedOracle}</string></dict></plist>`);
 const helper = resolve(process.env.CU_HELPER ?? resolve(root, 'native/target/debug/cu-helper'));
+const mcp = resolve(process.env.CU_MCP ?? resolve(root, 'typescript/packages/mcp/dist/main.js'));
 const built = spawnSync('xcrun', ['swiftc', resolve(root, 'tests/fixtures/macos/Fixture.swift'), '-o', executable], { encoding: 'utf8' });
 assert.equal(built.status, 0, built.stderr);
 const require = createRequire(resolve(root, 'typescript/package.json'));
@@ -91,7 +92,7 @@ function recordIsolationSample(before, after) {
 try {
   const policy = resolve(run, 'policy.json');
   await writeFile(policy, JSON.stringify({ desktop: true, allowed_pids: [], allow_input: true, allow_screenshot: false, allow_accessibility: true, session_seconds: 90 }));
-  const transport = new StdioClientTransport({ command: process.execPath, args: [resolve(root, 'typescript/packages/mcp/dist/main.js'), '--helper', helper, '--policy', policy], stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [mcp, '--helper', helper, '--policy', policy], stderr: 'pipe' });
   transport.stderr?.on('data', data => process.stderr.write(data));
   client = new Client({ name: 'targeted-input-acceptance', version: '0.1.0' });
   await client.connect(transport);

@@ -2,13 +2,11 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ComputerRuntime } from '@independent-cu/runtime';
 import { parseArgs } from 'node:util';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createComputerServer } from './server.js';
 import { McpSession } from './session.js';
+import { resolveHelperPath } from './helper-path.js';
 const { values } = parseArgs({ options: { helper: { type: 'string' }, policy: { type: 'string' } } });
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../');
-const helperPath = values.helper ?? process.env.CU_HELPER ?? resolve(root, 'native/target/debug', process.platform === 'win32' ? 'cu-helper.exe' : 'cu-helper');
+const helperPath = resolveHelperPath(import.meta.url, values.helper ?? process.env.CU_HELPER);
 const session = new McpSession(() => new ComputerRuntime({ helperPath, policyPath: values.policy, onStderr: message => process.stderr.write(message) }));
 const server = createComputerServer(session);
 let shuttingDown: Promise<void> | undefined;

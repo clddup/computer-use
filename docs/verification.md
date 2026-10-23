@@ -2,6 +2,14 @@
 
 日期：2026-10-23（含 2026-10-17/18/19/22 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
 
+## 2026-10-23 仓库内 release 打包
+
+- `pnpm --dir typescript package:macos` 已实际生成并重复更新 `dist/app-use/`，包括 Cargo release helper、Swift bridge、MCP 及生产依赖。Cargo 报告 `opt_level=3`、`debug_assertions=false`；包内 helper 的 rpath 只保留 `@executable_path`，签名检查通过，默认入口不会在包损坏时回退到 debug。
+- 打包脚本在移动暂存目录后执行真实 MCP 初始化、11 个工具发现、native capabilities 及 stop，再替换旧包；不启动桌面会话或请求权限。另将完整包复制到带空格的新位置验证，dyld 实际加载该位置的 sibling bridge，未使用 Cargo build cache。记录：`.local/package-macos/relocated-deNuh8/results.json`。
+- TypeScript 构建、协议一致性、typecheck、**56 项测试**通过；新增 6 项覆盖 release 产物选择、rpath、目录保护、依赖链接边界及包内 helper 解析。输出产物被 Git 忽略，脚本不会修改用户配置。
+- 已单独备份并将本机用户级 `app-use` 的入口与 helper 切换为 `dist/app-use/` 中的路径，保留原环境及其他配置；没有终止已有客户端，需重连加载新包。
+- **权限与分发边界**：当前包使用显式 ad-hoc 签名，非 Developer ID、未做公证，不保证重编译后 TCC 授权沿用。新 helper 的 AX、屏幕录制预检均为 false，因此本轮不运行会请求权限的 GUI 测试，不将 native MCP 连接通过冒充已获系统授权或已通过 release GUI 验收。未打开系统设置、重置 TCC 或改走全局 AppleScript 输入。
+
 ## 2026-10-23 WPS 后台输入故障复验
 
 - 会话 `6cf02aa4-110e-4160-892b-30e352cf62cf` 已使用 `screencapturekit-stream`，不是旧桌面截图路径。普通定向点击虽返回 dispatched，WPS 新建浮层未出现；最后 `cmd` 不受支持却被记为 unknown，不能据此断言键盘已执行。

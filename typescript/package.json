@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 run build",
+    "package:macos": "node ../scripts/package-macos.mjs",
     "protocol:generate": "node ../scripts/generate-protocol.mjs",
     "protocol:check": "node ../scripts/generate-protocol.mjs --check",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",

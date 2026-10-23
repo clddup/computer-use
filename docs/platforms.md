@@ -24,6 +24,8 @@ Windows 支持固定 profile 的应用生命周期；macOS 支持动态发现运
 
 开发树依赖 OUT_DIR，分发时必须将 bridge dylib 放在 helper 旁边。可用命令定位和核对（只在 macOS）：
 
+推荐直接使用 `pnpm --dir typescript package:macos`，将 release helper、Swift bridge 和完整 MCP 运行依赖统一输出到 `dist/app-use/`。脚本会移除 Cargo OUT_DIR 的 rpath，重新签名并检查包内加载；生成的 `mcp.json` 不再指向 debug 或源码构建目录。参见 [打包说明](../README.md#macos-release-打包)。以下命令用于手动核查，而非完整打包流程。
+
 ```sh
 find native/target/release/build -name libcu_macos_bridge.dylib
 # 复制本次构建对应的 dylib 到 helper 同目录后：
