@@ -1,6 +1,36 @@
 # 实际验证记录
 
-日期：2026-10-22（含 2026-10-17/18/19 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+日期：2026-10-23（含 2026-10-17/18/19/22 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+
+## 2026-10-23 解锁后复验：共享帧与单应用 MCP
+
+- **真实窗口共享帧通过**：`.local/macos-shared-capture-z9Sc58/results.json`。只有一个自建后台窗口，PNG 为窗口自身的 720×544 画面，不含桌面、Dock 或上层应用。红→蓝的像素更新、4 次静态重读、取消不返回图片、幂等停止与系统共享状态断言通过；`shared-red.png`、`shared-blue.png` 已实际打开核对。系统紫色共享标志确实位于该窗口标题栏。
+- 首轮 `.local/macos-shared-capture-lUmVWC/` 的像素已正确，但测试程序用 regular 启动方式成为前台，整体记为失败。修正测试宿主为 accessory，并增加截图前非前台断言后才通过。成功样本仍记录 `foreground_unchanged_sample=false`，不把人工切应用期间的两个时间点宣称为严格的全程前台保位证明，也不承诺所有应用完全隔离。
+- **单应用后台真实 MCP：10 组通过**，`.local/macos-targeted-o1Ep1y/results.json`。后台冷启动、点击、Unicode/快捷键、双击/释放、拖动/释放、滚动之外，新增在同一 MCP 连接 stop → start 获得不同原生 helper epoch、拒绝旧观察且不投递输入、新会话重新观察成功。测试仅 AX，不请求屏幕录制；只有一个自建应用，无前台 sentinel，结束后清理。
+- MCP 异步样本出现人工移动鼠标，原始采样保留，**不当成鼠标硬件隔离通过证据**。较晚一次额外共享流复跑 `.local/macos-shared-capture-vJqlTd/` 又遇锁屏，正确 blocked；不覆盖上述解锁期间的成功记录。
+- 以上不等于 WPS 整个任务完成，也不等于跨进程录屏已验收。当前执行宿主的录屏预检仍为 false，自窗口共享 API 的成功不扩大权限；WPS 新建浮层→空白 Word 仍需在获系统授权的宿主里完整复验。`app-use` 配置未修改，现有 MCP 进程需重连才能载入上一轮构建的新代码。
+
+## 2026-10-23 会话 14725e9d：共享流截图与 MCP 会话恢复
+
+用户指定会话先真实调用 `app-use`，随后在 12:18:35 返回 cancelled；12:18:29 的系统日志显示原 helper 与 ReplayKit 的 XPC 连接中断。后续恢复会话在 12:35:39 出现停流错误 -3808，又出现 capture_timeout，Agent 转而执行 `screencapture -x /tmp/s6.png` 等整屏截图。这些是会话记录中的 Bash 操作，不是 MCP 图片。证据仅保存于 `.local/session-14725e9d/`，不提交个人截图/会话记录。
+
+- 实现：macOS 截图改为长驻 helper 持有的窗口 `SCStream` 帧，AX worker 不再截图；删除 `SCScreenshotManager` 路径，图片标记 `screencapturekit-stream`。流的暂停/空白/中断不返回旧图或桌面图；保留错误 domain/code，区分用户停止与系统故障。已停止流的 -3808 清理作为幂等成功处理。
+- MCP 新会话容器支持显式 start → stop → start，以及取消后显式 start；仅清理成功后创建新 helper，阻止并发替换和旧请求污染新会话，不重放动作。SDK 实例终态不变。Agent instructions/skill 明确禁止截图错误后使用 shell/AppleScript/激活窗口绕行；这不是对其它宿主工具的强制限制。
+- 静态/协议回归：Rust **45** 项，TypeScript **50** 项，Swift 无输入检查 **9** 组；包含真实 MCP stdio、TS runtime 和两个协议 fixture 子进程的 stop/start 测试，**不是原生 GUI 验收**。共享帧像素编码、idle 复用、suspended 清图和中断失效使用合成 CMSampleBuffer 测试，无屏幕访问。Clippy `-D warnings`、fmt、协议一致性、typecheck 和构建通过。
+- **真实 GUI 尚未通过**：初次自窗口共享只收到 suspended；后台 fixture 的 CG 窗口几何与 AX 不一致。随后只读确认系统锁屏标志为 true、前台为 `com.apple.loginwindow`，未发送测试输入、未解锁、未请求或修改系统权限。新增明确的 `desktop_unavailable` 保护。`.local/macos-shared-capture-FuvGSd/results.json` 为 **blocked / exit 2**，不是成功证据。较早测试失败产物保留，未算通过。
+- 最终单应用 MCP 回归 `.local/macos-targeted-9EmvJv/results.json` 同样 **blocked / exit 2**：start 阶段已明确提示锁屏，在启动 fixture 前停止。待用户解锁后，顺序重跑 `test:gui:macos:shared-capture` 与单应用 `test:gui:macos:targeted`（新增真实 native stop/start 及旧观察拒绝）。当前测试宿主录屏预检仍为 false；跨进程截图及 WPS 从新建浮层到空白 Word 的完整链路仍需在获系统授权的宿主中验收。旧 MCP 进程不会热载入新版本，需要用户重连 `app-use`。
+
+## 2026-10-23 macOS 后台输入、浮层与系统共享标识
+
+默认桌面会话无需预填 PID；macOS 通过 `NSWorkspace` 打开 bundle ID / `.app`，`activates=false`。正常输入不再隐式激活窗口，只有显式 `activate_window` 会执行激活。输入使用窗口定向 `NSEvent`/`CGEvent.postToPid`，独立指针为非激活、鼠标穿透窗口，不回退全局 HID。非公开 `CGEventSetWindowLocation` 与窗口编号字段做运行时存在性/回读检查，不能保证所有 macOS 版本或应用兼容。
+
+- **单应用后台真实 MCP：8 组通过**，`.local/macos-targeted-7f8KTh/results.json`。仅一个自建应用，由 `computer_launch_app` 冷启动，不预配 PID、不另起前台 sentinel；验证启动/点击不激活且不抬到最上层、Unicode/快捷键、双击、拖动/释放、滚动内容变化、stop。测试 policy 仅为关闭录屏请求而使用 AX-only desktop 模式，不写入用户 MCP 配置。默认不打开浮层演示；`--popup` 才显式执行该项。
+- **浮层闭环已通过**，此前 `.local/macos-targeted-nlsRkz/results.json`：自建 `layer 24` 浮层被枚举、AX 观察和点击，主窗口观察会警告前方浮层；不再因输入前 raise 父窗口而将浮层关掉。这次较早的测试用了两个合成应用，后按用户要求撤掉前台 sentinel，后续只运行上述单应用后台测试。
+- **系统标识与指针显示专项通过**，`.local/macos-presentation-dcDUQG/results.json`：本进程自建窗口共享，无录屏授权请求，系统 `hasActiveWindowSharingSession` 及紫色标题栏标记随真实 `SCStream` 开/关；独立指针可见、穿透且不获焦点；同目标 metadata-only 观察保留流，切目标、取消、目标关闭清理。`sharing.png` / `pointer.png` 已实际打开核对。这个自窗口结果不冒充真实 WPS 或跨进程录屏验收。
+- 异步 MCP 采样期间存在人工移动鼠标，记录中保留 `pointerUnchanged=false`，**不把该样本算作硬件隔离证明**。显示模块的同步调用保位检查通过；另外两个 MCP 双击/拖动样本记录物理位置和前台窗口均不变。不承诺输入法组合文本、用户同时编辑同一应用或所有第三方应用的完整焦点隔离。
+- 验收先后复现并修正了局部坐标 Y 翻转（误点到 Drag Region）、滚轮缺少 NSEvent 真正窗口编号（事件未到目标），没有将初版失败算为通过。冷启动出现 `658×570 → 660×572` 几何过渡，旧引用正确返回 `stale_window`；测试只对只读枚举/观察有界刷新，绝不自动重放输入。
+- 静态回归：Rust **44** 项、TypeScript **34** 项、Swift 无输入检查 **7** 组，Clippy `-D warnings`、fmt、四包构建/协议一致性/typecheck 通过。core 原超500行，测试机械移到独立文件后生产文件493行；Swift 按桥接、输入、会话显示分文件。没有新增运行时依赖或 wire 类型。
+- 当前宿主录屏权限仍未授予；没有 reset TCC、打开设置或替用户点击开关。本轮跨进程整套截图/图像坐标、重新实现后的 stop/EOF/TTL 真实持键中断、release 和 Windows/Linux GUI **未重跑**，历史20组不能冒充本轮结果。构建已更新，不替用户终止现有 Claude Code/MCP 进程；重连后才载入新版本。
 
 ## 2026-10-22 需求纠正：只请求 macOS 系统权限
 

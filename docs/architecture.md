@@ -18,6 +18,10 @@ Rust 工程位于 `native/`，Node 工程位于 `typescript/`。MCP 与 SDK 不�
 
 helper 的 `Runtime` 依赖已有 `Backend` 接口，并注入租约获取函数。生产后端保留原有隔离方式：查询和 UIA semantic 在 worker 中运行，物理输入在父执行线程运行；状态机单测使用内存后端与空租约，不获取真实桌面租约。代码按会话、应用、窗口、动作、stdio 和 worker 分离，测试不依赖真实桌面状态。
 
+macOS 的 AX 查询在短命 worker 中，截图、独立指针和持续窗口共享由长寿命 helper 主线程持有，通过有界 AppKit 事件泵维护。截图直接编码选中窗口 `SCStream` 的完整帧，标记 `capture_method=screencapturekit-stream`；不再另起截图 worker 或调用 `SCScreenshotManager`，没有桌面截图回退。只缓存最新有效帧；idle 可复用未变化内容，suspended/blank/停止会清除图像，无可用帧则有界报错。`NSEvent`/`CGEvent` 携带目标窗口 ID、屏幕/窗口局部坐标，经 `postToPid` 投递，不隐式激活目标、不回退全局 HID；键盘另校验目标应用自己的 focused window。局部坐标接口 `CGEventSetWindowLocation` 和 NSEvent window-number 事件字段是非公开兼容点，缺失或回读不一致时显式失败。
+
+窗口枚举保留真实应用的非零层浮层；主窗口截图不自动合成其它窗口，观察警告会指出前方窗口，Agent 应重新枚举并选择浮层。指针窗口不进入 Agent 的窗口列表。持续 `SCStream` 自动产生 macOS 系统共享标志，不自绘授权或系统状态图标；metadata-only 观察保留同一目标已有流，切换目标停旧流。显式 stop 在 `Backend.end_session` 清理显示后才确认成功；EOF/TTL 在主循环清理。
+
 ## Wire
 
 请求为 `{version:1,id,command:{method,params}}`，响应为 `{version:1,id,result,error}`，正常响应只有 result 非 null，错误响应只有 error 非 null。每个 JSON 后必须换行；单帧上限 **16 MiB（包括换行）**。不接受未知结构字段。`id` 是响应关联 ID，不是通用请求去重键；只有 `action_id` 有动作日志去重语义。
@@ -30,9 +34,13 @@ Rust `cu-protocol` 是 wire 类型源，schemars 生成 JSON Schema，再生成 
 
 ## 会话与观察
 
+默认启动无需 PID/policy：桌面会话动态发现应用和窗口，选择后的引用绑定进程启动身份；新应用可在下一次枚举时被发现。macOS 通过 NSWorkspace 解析 bundle ID 或 `.app` 路径打开应用，不执行 shell。显式 policy 仍保留原有受限模式。
+
+
 - 会话可以从固定 `allowed_apps` profile 冷启动；启动后以真实可见窗口重新建立进程身份绑定。返回 `pending` 或仍活动会话中的启动结果不确定时，可以通过 `list_apps`/`list_windows` 发现并绑定迟到窗口，不需要重新启动应用。枚举不会自动绑定未请求启动的 profile。
 - `get_window` 实时核验进程身份和几何，而非只检查缓存。`activate_window` 在执行线程及查询 worker 内重新核验，并在可能开始激活之前清除旧观察；成功、失败或结果不确定后，输入前均需重新 observe。
-- 每个 helper 仅允许一次 start；stop 后创建新 runtime/helper。
+- 每个 helper 仅允许一次 start；SDK stop 后创建新实例。MCP 由会话容器持有 runtime，stop 不关闭 MCP 连接；后续显式 `computer_start` 创建新 runtime/helper。取消或共享流中断后同样仅在显式 start 时先清理再重建，不自动恢复输入，也不继承旧观察/动作日志。清理失败不允许创建替代 helper。
+- 共享中断保留系统错误 domain/code，不再只返回泛化的 cancelled。系统报告用户停止（-3817）才标记 `user_interruption`，其它流故障为 `capture_stream_stopped`。锁屏/登录桌面返回 `desktop_unavailable`；已有共享停止并禁止输入，不代用户解锁。
 - 会话固定批准 PID 或 host-approved application profile 的进程启动身份，窗口引用包含 PID、启动身份、原生窗口 ID 和几何。
 - 每用户一个 OS 文件锁：保守覆盖所有显示器/桌面。锁直到执行线程退出输入路径、释放 RAII guard 后才释放，不允许按 TTL 抢锁。
 - 单一当前观察，默认有效 30 秒；observe 清旧观察，进入可能副作用的动作前消耗观察。默认请求截图、关闭 accessibility；调用方需要结构化树/焦点信息时显式请求 accessibility。

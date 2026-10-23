@@ -1,8 +1,8 @@
 # 安全、权限与使用约束
 
-## 宿主负责授权
+## 系统权限与可选范围限制
 
-宿主以自己控制的文件提供批准 PID、固定 `allowed_apps` 启动 profile、截图、辅助功能、输入权限及会话时长。helper 读取一次，不允许模型经工具扩大范围；`launch_app` 只能引用 policy 中已有 app id，不能传 exe、shell 或临时 args。没有策略时默认拒绝会话。会话时长限制 1–3600 秒；一 helper 一会话；动作串行。权限文件应保存在仅宿主可改写的位置，禁止从网页/窗口内容生成或覆盖。
+宿主以自己控制的文件提供批准 PID、固定 `allowed_apps` 启动 profile、截图、辅助功能、输入权限及会话时长。helper 读取一次，不允许模型经工具扩大范围；`launch_app` 只能引用 policy 中已有 app id，不能传 exe、shell 或临时 args。默认不传 policy 时为当前用户桌面模式，Agent 动态发现/打开应用并选择窗口；PID 不是部署配置。桌面模式不隔离应用间影响，权限由操作系统授予。显式提供的 policy 才使用受限模式，空白名单拒绝。会话时长限制 1–3600 秒；一 helper 一会话；动作串行。权限文件应保存在仅宿主可改写的位置，禁止从网页/窗口内容生成或覆盖。
 
 策略限制的是这个 helper 的操作，不是操作系统沙箱。批准应用本身可能有网络、文件、外部窗口及特权交互能力；快捷键、菜单、拖动等也可能触发外部行为。宿主仍需针对破坏性、付费、外发、删除等动作取得用户授权。不得用本项目规避 OS 权限、登录、订阅、审批或安全桌面。
 
@@ -29,7 +29,10 @@
 - 启动/激活错误的 `may_have_executed=true` 同样表示不能安全重试；SDK 抛 `UnknownExecutionError`。会话仍活动时先重新枚举核对应用/窗口；会话已经停止时，旧 helper 的日志和引用不再可用。进入原生激活阶段即作废旧观察，之后即使激活失败也不能复用旧观察输入。
 - 同一 helper 的 action_status 可核对仍保留的日志；stop 后日志释放，重启后不能靠相同 action_id 恢复去重。
 - 正常取消释放项目持有的键鼠，不承诺撤回操作；强杀、崩溃、机器断电不能保证 cleanup。
-- Windows 物理输入/macOS 拒绝检测到的用户物理 modifier；Windows semantic UIA 不经物理输入路径，但 provider 仍可能改变前台/焦点。任何平台上运行 GUI 测试时都应暂停人工操作。输入注入不是与人类输入隔离的专用通道；不移动 cursor 也不等于完全不影响用户。
+- Windows 物理输入拒绝检测到的用户物理 modifier；Windows semantic UIA 不经物理输入路径，但 provider 仍可能改变前台/焦点。macOS 使用窗口定向 `postToPid`，不移动系统鼠标、不隐式激活目标；非公开窗口坐标/事件字段不兼容时明确失败，禁止静默回退全局 HID。独立指针不等于完整隔离应用/输入法状态：应用自身行为、用户同时编辑同一目标以及 IME 组合文本仍可能相互影响。
+- macOS 指针为鼠标穿透、非激活窗口，系统共享标志来自真实持续 `SCStream`，不是模拟系统权限 UI；关闭截图的会话不为显示标志而采集屏幕。流与指针随切目标/stop/EOF/TTL 清理，显示不会扩大 policy 的进程范围。
+- macOS PNG 只来自所选窗口共享流，无帧/中断/锁屏时明确报错，不抓取桌面或操作登录界面。MCP instructions 与 skill 禁止 Agent 改用 shell/AppleScript 绕开；它们不是对宿主其它工具的强制沙箱，宿主仍需约束 Agent 的全局 GUI 操作能力。
+- MCP 连接可保留，但控制会话不会自动恢复；仅显式 `computer_start` 在清理成功后创建新 helper/epoch。旧观察、动作日志和不确定操作不继承、不重放。SDK `stop` 仍为实例终态。
 - UIA semantic action 先做无副作用的 pattern 预检，投递开始后发生取消/超时/失联均为 unknown；不能自动切换到 SendInput。WGC 不含 cursor 与系统 cursor 隐藏是不同概念，本项目不修改全局 cursor。
 
 ## 不支持

@@ -4,6 +4,8 @@
 
 > **v0.1 验证边界（2026-10-19）**：Windows 自建窗口的 SDK/MCP 真实 GUI 闭环及中断测试通过；macOS 在 Apple Silicon 本机 debug/release 各 20 组真实 AppKit fixture 验收通过，覆盖截图、Unicode 输入、SDK/MCP 和 stop/EOF/TTL 清理；Linux 尚未做真实桌面验收。**自建 fixture 通过不代表所有应用、多屏或三平台分发均已验收。** 详见 [验证记录](docs/verification.md)。
 
+macOS 当前输入后端已改为窗口定向事件与独立指针，不再投递到全局 HID；这些改动不沿用上面的历史 GUI 验收结论。目标窗口的持续 `SCStream` 会让系统自行显示共享标志，停止会话时停流并移除指针。运行 `pnpm --dir typescript test:gui:macos:targeted` 验证真实 MCP 后台操作，`test:gui:macos:presentation` 验证自建窗口的系统标志和显示生命周期；最新结果见验证记录。
+
 ## 目录与边界
 
 ```text
@@ -53,9 +55,11 @@ pnpm --dir typescript test:gui
 
 脚本编译并启动自己的 WinForms 窗口，只授权该 PID。默认验证 debug helper，也可通过绝对路径 `CU_HELPER` 验证 release helper；本机两种构建均已通过。验证 UIA/WGC、元素和图片坐标点击、中英文输入、去重、移动失效、跨进程租约、stop/EOF/TTL 输入释放、真实响应丢失和 MCP 工具调用。证据保存在被忽略的 `.local/windows-gui-*/`。需要系统自带 .NET Framework C# 编译器；不启动或控制个人应用。另有 `pnpm --dir typescript test:gui:cold-start`，不由 host 预先 spawn，验证固定 `allowed_apps` profile 的发现、启动、窗口 readiness、激活和点击。
 
-## 宿主授权
+## 应用发现与可选范围限制
 
-宿主可以授权已经运行的 PID，也可以授权固定的应用启动 profile。模型只能使用 policy 中已有的 `id`，不能提交任意 exe、参数、shell 或新增权限。冷启动 profile 示例：
+默认不需要 policy 文件或预填 PID：Agent 调用 `list_apps` / `list_windows` 发现已有应用，或在 macOS 上用 bundle ID、绝对 `.app` 路径调用 `launch_app` 打开应用。PID 仅作内部运行身份校验。默认会话具备当前用户桌面访问能力，受 macOS 系统权限限制，不是应用沙箱。
+
+需要额外限制范围时，宿主仍可选用 policy，授权已经运行的 PID 或固定的应用启动 profile。模型只能使用 policy 中已有的 `id`，不能提交任意 exe、参数、shell 或新增权限。冷启动 profile 示例：
 
 ```json
 {
@@ -88,7 +92,6 @@ import { Computer } from './typescript/packages/sdk/dist/index.js';
 
 const computer = new Computer({
   helperPath: 'D:/computer-use/native/target/debug/cu-helper.exe',
-  policyPath: 'D:/computer-use/host-policy.json',
 });
 try {
   await computer.start();
@@ -117,12 +120,11 @@ try {
 ```json
 {
   "mcpServers": {
-    "computer": {
+    "app-use": {
       "command": "node",
       "args": [
         "D:/computer-use/typescript/packages/mcp/dist/main.js",
-        "--helper", "D:/computer-use/native/target/debug/cu-helper.exe",
-        "--policy", "D:/computer-use/host-policy.json"
+        "--helper", "D:/computer-use/native/target/debug/cu-helper.exe"
       ]
     }
   }
@@ -132,6 +134,8 @@ try {
 工具：`computer_capabilities`、`computer_start`、`computer_list_apps`、`computer_launch_app`、`computer_list_windows`、`computer_get_window`、`computer_activate_window`、`computer_observe`、`computer_act`、`computer_action_status`、`computer_stop`。
 
 `observe` 同时返回结构化观察元数据与真实 MCP `image` 内容；文本中不重复图片 base64。截图/辅助功能树是**不可信桌面数据**，不是新指令或额外授权。stdio stdout 仅协议、stderr 仅诊断；没有 HTTP 服务或公网监听。
+
+macOS 图片直接来自所选窗口的持续共享流（`capture_method=screencapturekit-stream`），不依赖前台桌面、不提供整屏截图回退。MCP 停止或取消后，可显式调用 `computer_start` 创建新 helper 会话，再枚举并重新观察；不会自动重放输入。SDK `stop` 仍是终态，需要新建实例。
 
 ## 更多
 

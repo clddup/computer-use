@@ -3,12 +3,12 @@
 | 平台 | 真实实现 | 本轮验证 | 限制 |
 | --- | --- | --- | --- |
 | Windows | Win32/DWM、UI Automation、WGC、SendInput；固定 host-approved app profile 的直接启动与窗口 readiness | Windows 11 build 26200 编译、单测、SDK/MCP 自建 GUI 实测及 debug/release 冷启动实测 | 可见普通完整性窗口；v2 UIA Invoke/Toggle/Select/SetValue 实测，不控制 UAC/安全桌面 |
-| macOS | AX、ScreenCaptureKit 单帧、CoreGraphics，Swift C ABI bridge；显式窗口激活 | Apple Silicon / macOS 27.0.1 debug/release 各 **20 组真实 SDK/MCP GUI 验收通过**，另有无输入桥接检查 | macOS 14+；需 AX/屏幕录制权限，窗口 AX 几何关联必须唯一；未覆盖所有应用/多屏组合或正式签名分发 |
+| macOS | AX、ScreenCaptureKit 截图与持续窗口共享、窗口定向 CoreGraphics 输入、独立指针；NSWorkspace 应用发现/启动 | 历史 debug/release 各20组不作为当前定向输入的验收；本轮专项结果见 verification.md | macOS 14+；非公开窗口事件接口需运行时检测；自窗口无 TCC 共享专项测试需14.4+；未覆盖所有应用/多屏或正式分发 |
 | Linux | X11/EWMH、XTEST、AT-SPI D-Bus、root screen-region PNG | aarch64-unknown-linux-gnu cargo check 通过，**未链接/GUI 实测** | 仅 X11；无 native Wayland；截图可能含遮挡物，Unicode 使用 EditableText |
 
 capabilities 报后端声明，不是所有权限、控件及截图都已验证可用的证明；具体失败由观察/动作返回。
 
-Windows 目前是唯一实现并验收了 app discovery/launch 生命周期的平台；macOS/Linux 的应用发现/启动会明确返回 `unsupported_action`，不因工具被发现就宣称已具备跨平台启动。macOS 的 `activate_window` 已接通有界激活准备路径，并通过同进程双窗口的激活/几何保持验收。
+Windows 支持固定 profile 的应用生命周期；macOS 支持动态发现运行应用、通过 bundle ID 或绝对 `.app` 路径打开应用，无需预填 PID。Linux 应用生命周期仍返回 `unsupported_action`。macOS `activate_window` 为显式激活工具，定向输入不再隐式执行这个步骤。
 
 ## Windows
 
@@ -48,6 +48,9 @@ pnpm --dir typescript test:gui:macos
 
 - `test:macos:bridge`：编译真实 bridge，检查内核进程身份、混合 JSON 数值 bounds、截图尺寸预算、整数边界及 CGEvent 多击元数据；不截图、不投递事件、不请求权限。
 - `test:gui:macos:smoke`：仅启动自建 AppKit 窗口并读取其 synthetic oracle；不证明截图/输入可用。
+- `test:gui:macos:targeted`：只启动一个自建应用，由 MCP 冷启动且不预配 PID、不激活/置顶，验证点击、键盘/Unicode、滚动、拖动；`--popup` 才额外运行 layer-24 浮层。仅检查已有 AX 权限，不请求录屏。异步鼠标采样可能混入人工移动，独立指针的同步保位检查单独执行，不把人工移动误报为注入效果。
+- `test:gui:macos:presentation`：只共享本进程自建窗口，无 TCC 授权请求，验证系统紫色标志、独立指针穿透/焦点、切目标与停止清理；不替代跨进程录屏及所有真实应用验收。
+- `test:gui:macos:shared-capture`：一个后台自建窗口，验证共享流 PNG 的像素、内容更新、静态画面重复读取和停止；不抓桌面、不请求授权。锁屏时 exit 2 并记录 blocked，不能把“有系统共享标志”当作已经收到图像帧。
 - `test:gui:macos`：仅操作新建 fixture，验证 SDK/MCP、截图/AX/输入、观察失效、去重及 stop/EOF/TTL。AX 或屏幕录制预检缺权限时在启动窗口前以 exit 2 阻塞；观察阶段权限被撤销也记为 blocked，不冒充通过。需要手动授权真实负责的宿主/helper，必要时重启宿主后重跑；测试脚本不修改系统权限。
 - 每次测试产物位于被忽略的 `.local/macos-gui-*`，`results.json` 区分 `passed`、`blocked`、`failed`、`smoke-only`。测试期间暂停人工键鼠操作；真实截图通过后仍需打开核对，不仅检查 PNG 文件头。
 - fixture 的 `command.json` 仅允许移动测试窗口与切换其内部窗口，用于故障注入；实际点击、文本等输入只能经 SDK/helper 发生。

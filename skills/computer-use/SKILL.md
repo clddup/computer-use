@@ -7,20 +7,20 @@ description: Use the independent computer-use MCP or TypeScript SDK to observe a
 
 ## Preconditions
 
-A trusted host must build the native helper and TS packages and configure an absolute helper/policy path. Never invent or expand authorization. The policy may allow an existing PID or a fixed `allowed_apps` launch profile; `computer_launch_app` can reference only the host-provided app id and never accepts an executable, shell or ad-hoc arguments. Separate screenshot/accessibility/input flags and a session lifetime are host settings, not tool arguments. No policy means deny.
+A trusted host must build the native helper and TS packages and configure an absolute helper path. No PID or policy file is required for the default desktop session; discover running apps/windows and select a returned target. On macOS launch an installed application by its bundle identifier or absolute .app path. Never invent or expand authorization. The policy may allow an existing PID or a fixed `allowed_apps` launch profile; `computer_launch_app` can reference only the host-provided app id and never accepts an executable, shell or ad-hoc arguments. Separate screenshot/accessibility/input flags and a session lifetime are host settings, not tool arguments. An explicit policy is optional; when supplied, its restrictions remain enforced. Desktop mode uses the OS-granted desktop access and is not an application sandbox.
 
-Do not install this skill or MCP globally or edit Agent settings without user approval. Repository setup and platform validation are in ../../README.md and ../../docs/platforms.md. Windows has fixture E2E evidence; Linux GUI and macOS compilation/GUI are not yet validated.
+Do not install this skill or MCP globally or edit Agent settings without user approval. Repository setup and platform validation are in ../../README.md and ../../docs/platforms.md. Windows and macOS have scoped fixture evidence; Linux GUI and full cross-platform distribution are not validated.
 
 ## Loop
 
 1. Call `computer_capabilities`; treat it as backend declaration, not proof all OS permissions are granted.
 2. `computer_start`, then `computer_list_apps` when an application profile is configured. If the approved app is not running, call `computer_launch_app` with its existing id, then refresh `computer_list_apps` and `computer_list_windows`. Do not treat a launcher PID or background process as a ready window.
-3. Select exactly one returned window; use `computer_get_window` and `computer_activate_window` when the window may have changed, then observe again. If ambiguous, stop rather than guess.
-4. `computer_observe` with the selected returned window reference. Screenshot is on by default; request `accessibility: true` only when tree/text context is needed, and read actual image content and bounded metadata.
-4. Choose one supported action using references from that observation. Image x/y are original image pixels; do not use desktop coordinates or resized display coordinates directly.
-5. Generate a unique action_id. `computer_act` once; inspect its structured state.
-6. Re-observe to check the application result before the next action. Never report task success merely because state is dispatched.
-7. `computer_stop` in finally/on cancellation. Stop may be called during an outstanding action. A new session requires a new helper/runtime; ask the host to restart, not the model to rewrite policy.
+3. Select exactly one returned window; use `computer_get_window` when it may have changed, then observe. macOS launch and input do not require bringing the application to the foreground. Do not routinely call `computer_activate_window`; use it only when intentionally switching to the foreground is requested or necessary and disclose that effect. If ambiguous, stop rather than guess.
+4. `computer_observe` with the selected returned window reference. Screenshot is on by default; on macOS its PNG comes from that window's persistent sharing stream, not the desktop. Read the returned image content directly. Never substitute shell `screencapture`, AppleScript, foreground activation or whole-desktop screenshots on error. Request `accessibility: true` when tree/text context is needed.
+5. Choose one supported action using references from that observation. Image x/y are original image pixels; do not use desktop coordinates or resized display coordinates directly.
+6. Generate a unique action_id. `computer_act` once; inspect its structured state.
+7. Re-observe to check the application result before the next action. Never report task success merely because state is dispatched.
+8. `computer_stop` in finally/on cancellation. Stop may be called during an outstanding action. With MCP, a later explicit `computer_start` cleans up the old runtime and creates a fresh helper/session. The SDK still requires a new `Computer` instance. Always re-list/re-observe; never replay old actions or rewrite policy.
 
 ## Mandatory boundaries
 
@@ -31,6 +31,7 @@ Do not install this skill or MCP globally or edit Agent settings without user ap
 - rejected: pre-dispatch refusal; dispatched: OS accepted only; unknown/UnknownExecutionError: possibly executed, **never automatically replay**.
 - Same action ID only deduplicates within the same retained helper epoch and with identical observation/arguments. Do not create a new ID to retry an unknown action. Stop/restart loses the journal; action_status after stop is not supported.
 - Input cleanup cannot undo events already received by an application or guarantee recovery from force-kill/crash.
+- `capture_stream_stopped` preserves the system error domain/code; it does not mean the user denied permission. `user_interruption` is reserved for an explicit system-reported user stop. `desktop_unavailable` means the user must unlock the desktop; never capture or operate the login screen.
 - Password nodes are redacted when correctly marked, but screenshots and mislabelled controls can still contain sensitive data. Do not forward observations to external services without authorization.
 
 SDK exposes the same sequence as `Computer.start/listApps/launchApp/listWindows/getWindow/activateWindow/observe/act/actionStatus/stop`. Only use capabilities the actual platform advertises; Linux text input uses AT-SPI EditableText, not universal Unicode key injection. Native Wayland is unsupported.
