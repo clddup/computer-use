@@ -50,10 +50,15 @@ private final class AgentPointer:NSView {
     override func draw(_ dirtyRect:NSRect) {
         let path=NSBezierPath()
         path.move(to:NSPoint(x:2,y:2))
-        for point in [NSPoint(x:2,y:27),NSPoint(x:9,y:21),NSPoint(x:14,y:32),
-                      NSPoint(x:19,y:30),NSPoint(x:14,y:19),NSPoint(x:25,y:19)] { path.line(to:point) }
-        path.close(); NSColor.systemPurple.setFill(); path.fill()
-        path.lineWidth=2; path.lineJoinStyle = .round; NSColor.white.setStroke(); path.stroke()
+        for point in [NSPoint(x:2,y:17.75),NSPoint(x:6.2,y:14.6),NSPoint(x:9.35,y:21.8),
+                      NSPoint(x:12.35,y:20.45),NSPoint(x:9.2,y:13.325),NSPoint(x:16.7,y:13.325)] { path.line(to:point) }
+        path.close()
+        NSGraphicsContext.saveGraphicsState()
+        let shadow=NSShadow(); shadow.shadowColor=NSColor.black.withAlphaComponent(0.15)
+        shadow.shadowBlurRadius=1; shadow.shadowOffset=NSSize(width:0,height:-0.5); shadow.set()
+        NSColor(calibratedWhite:0.08,alpha:1).setFill(); path.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        path.lineWidth=1; path.lineJoinStyle = .round; NSColor.white.setStroke(); path.stroke()
     }
 }
 
@@ -182,7 +187,7 @@ func presentWindow(_ window:[String:Any],capture:Bool) throws {
 private func makeCursorPanel() -> CursorPanel {
     let panel=CursorPanel(contentRect:NSRect(x:0,y:0,width:30,height:36),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
     panel.title="Computer Use agent pointer"; panel.isOpaque=false; panel.backgroundColor = .clear
-    panel.hasShadow=true; panel.ignoresMouseEvents=true; panel.hidesOnDeactivate=false
+    panel.hasShadow=false; panel.ignoresMouseEvents=true; panel.hidesOnDeactivate=false
     panel.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary,.stationary]
     panel.isReleasedWhenClosed=false; panel.contentView=AgentPointer(frame:NSRect(x:0,y:0,width:30,height:36))
     return panel
