@@ -141,6 +141,7 @@ export interface ProtocolTypes {
   request: Request;
   response: Response;
   window: Window;
+  window_refresh: WindowRefresh;
 }
 export interface ActionOutcome {
   action_id: string;
@@ -148,11 +149,12 @@ export interface ActionOutcome {
   mechanism: string;
   message: string;
   state: ActionState;
+  window_refresh?: WindowRefresh | null;
 }
-export interface Application {
-  display_name: string;
-  id: string;
-  is_running: boolean;
+export interface WindowRefresh {
+  attempted: boolean;
+  settled: boolean;
+  warnings: string[];
   windows: Window[];
 }
 export interface Window {
@@ -167,6 +169,12 @@ export interface Rect {
   width: number;
   x: number;
   y: number;
+}
+export interface Application {
+  display_name: string;
+  id: string;
+  is_running: boolean;
+  windows: Window[];
 }
 export interface Capabilities {
   actions: string[];

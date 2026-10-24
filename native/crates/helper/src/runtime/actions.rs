@@ -76,20 +76,45 @@ impl<B: Backend, L> Runtime<B, L> {
                 cancelled(&self.cancel)?;
                 Ok(mechanism)
             });
-        Ok(match result {
+        let mut outcome = match result {
             Ok(mechanism) => self.outcome(
                 action_id,
                 ActionState::Dispatched,
                 &mechanism,
-                "OS accepted the operation; re-observe to verify the application result",
+                "OS accepted the operation; refreshed windows are available in window_refresh; observe a selected returned window before the next action",
             ),
             Err(error) => self.outcome(
                 action_id,
                 ActionState::Unknown,
                 "native",
-                format!("{error}; do not replay this action automatically"),
+                format!("{error}; refreshed windows are available in window_refresh; do not replay this action automatically"),
             ),
-        })
+        };
+        match self.refresh_windows_after_action(id) {
+            Ok((windows, settled, warnings)) => {
+                outcome.window_refresh = Some(WindowRefresh {
+                    attempted: true,
+                    settled,
+                    windows,
+                    warnings,
+                });
+            }
+            Err(error) => {
+                let windows = self
+                    .session
+                    .as_ref()
+                    .filter(|session| session.id == id)
+                    .map(|session| session.windows.values().cloned().collect())
+                    .unwrap_or_default();
+                outcome.window_refresh = Some(WindowRefresh {
+                    attempted: true,
+                    settled: false,
+                    windows,
+                    warnings: vec![format!("Post-action window refresh failed: {error}")],
+                });
+            }
+        }
+        Ok(outcome)
     }
 
     fn current_observation(&mut self, id: &str, observation_id: &str) -> Result<Observation> {
@@ -153,6 +178,7 @@ impl<B: Backend, L> Runtime<B, L> {
             state,
             mechanism: mechanism.into(),
             message: message.into(),
+            window_refresh: None,
         }
     }
 

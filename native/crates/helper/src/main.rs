@@ -30,8 +30,6 @@ fn run() -> Result<()> {
     ctrlc::set_handler(move || signal.store(true, Ordering::SeqCst))
         .map_err(|e| Error::new("signal_error", e.to_string()))?;
     let rx = transport::read_requests(cancel.clone());
-    #[cfg(target_os = "macos")]
-    let presentation_cancel = cancel.clone();
     let mut runtime = Runtime::new(
         policy,
         WorkerBackend::new(cancel.clone()),
@@ -46,14 +44,13 @@ fn run() -> Result<()> {
         }
         // Drain queued replies after cancellation; EOF closes the reader's sender.
         runtime.release_if_cancelled();
-        #[cfg(target_os = "macos")]
-        if let Some(error) = cu_platform_macos::maintain(presentation_cancel.load(Ordering::SeqCst))
-        {
+        if let Some(error) = runtime.maintain() {
             runtime.interrupt(error);
         }
     }
-    #[cfg(target_os = "macos")]
-    let _ = cu_platform_macos::maintain(true);
+    if let Some(error) = runtime.shutdown() {
+        eprintln!("Cleanup failed during helper shutdown: {error}");
+    }
     Ok(())
 }
 

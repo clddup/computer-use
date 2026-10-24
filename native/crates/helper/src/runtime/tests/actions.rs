@@ -1,6 +1,52 @@
 use super::*;
 
 #[test]
+fn dispatched_action_refreshes_new_window_topology_without_selecting_it() {
+    let (mut runtime, id) = setup(policy());
+    let mut document = window();
+    document.id = "document".into();
+    document.title = "Document".into();
+    runtime.backend.state.borrow_mut().post_action_windows = Some(vec![window(), document.clone()]);
+    let observed = observation(&mut runtime, &id);
+    let result = act(&mut runtime, &id, &observed, "opens-document");
+    assert_eq!(result["state"], "dispatched");
+    assert_eq!(result["window_refresh"]["settled"], true);
+    assert!(result["window_refresh"]["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|candidate| candidate["id"] == "document"));
+    let windows = runtime
+        .handle(
+            Command::ListWindows {
+                session_id: id.clone(),
+            },
+            MAX_VERSION,
+        )
+        .unwrap();
+    let returned = windows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["id"] == "document")
+        .cloned()
+        .unwrap();
+    let window: Window = serde_json::from_value(returned).unwrap();
+    let observation = runtime
+        .handle(
+            Command::Observe {
+                session_id: id,
+                window,
+                screenshot: false,
+                accessibility: false,
+            },
+            MAX_VERSION,
+        )
+        .unwrap();
+    assert_eq!(observation["window"]["id"], "document");
+}
+
+#[test]
 fn identical_action_is_dispatched_once_and_conflicting_id_is_rejected() {
     let (mut runtime, id) = setup(policy());
     let observed = observation(&mut runtime, &id);

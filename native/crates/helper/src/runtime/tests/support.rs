@@ -13,6 +13,7 @@ pub(super) struct State {
     pub activation_cancel: bool,
     pub activation_window: Option<Window>,
     pub perform_error: Option<Error>,
+    pub post_action_windows: Option<Vec<Window>>,
     pub preflight_error: Option<Error>,
     pub elements: Vec<Element>,
     pub launches: usize,
@@ -138,6 +139,9 @@ impl Backend for FakeBackend {
     ) -> Result<String> {
         let mut state = self.state.borrow_mut();
         state.inputs += 1;
+        if let Some(windows) = state.post_action_windows.clone() {
+            state.windows = windows;
+        }
         match &state.perform_error {
             Some(error) => Err(error.clone()),
             None => Ok("fixture".into()),

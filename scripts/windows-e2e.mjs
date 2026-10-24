@@ -180,7 +180,6 @@ try {
   record('Lost real action response produces unknown, without automatically repeating input');
 
   const deniedPolicy = resolve(run, 'denied-policy.json');
-  const policy = JSON.parse(await readFile(policyPath, 'utf8'));
   await writeFile(deniedPolicy, JSON.stringify({ ...policy, allowed_pids: [], allowed_apps: [] }));
   const deniedRuntime = new Computer({ helperPath, policyPath: deniedPolicy }); runtimes.push(deniedRuntime);
   await assert.rejects(deniedRuntime.start(), error => error.code === 'permission_denied'); await deniedRuntime.stop();

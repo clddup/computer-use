@@ -1,20 +1,62 @@
 use super::*;
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 impl<B: Backend, L> Runtime<B, L> {
     pub(super) fn list_windows(&mut self, id: &str) -> Result<Value> {
+        Ok(json!(self.refresh_windows(id)?))
+    }
+
+    pub(super) fn refresh_windows(&mut self, id: &str) -> Result<Vec<Window>> {
         self.refresh_pending_apps(id)?;
         let mut windows = self.backend.list_windows()?;
         let desktop = self.policy.desktop;
-        let session = self.session(id)?;
+        let processes = self.session(id)?.processes.clone();
         if desktop {
+            let session = self.session(id)?;
             session.processes = windows
                 .iter()
                 .map(|w| (w.pid, w.process_identity.clone()))
                 .collect();
         }
-        windows.retain(|w| session.processes.get(&w.pid) == Some(&w.process_identity));
+        let processes = if desktop {
+            self.session(id)?.processes.clone()
+        } else {
+            processes
+        };
+        windows.retain(|w| processes.get(&w.pid) == Some(&w.process_identity));
+        let session = self.session(id)?;
         session.windows = windows.iter().map(|w| (w.id.clone(), w.clone())).collect();
-        Ok(json!(windows))
+        Ok(windows)
+    }
+
+    pub(super) fn refresh_windows_after_action(
+        &mut self,
+        id: &str,
+    ) -> Result<(Vec<Window>, bool, Vec<String>)> {
+        const SETTLE_TIMEOUT: Duration = Duration::from_secs(1);
+        const SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
+        let mut windows = self.refresh_windows(id)?;
+        let deadline = Instant::now() + SETTLE_TIMEOUT;
+        let mut stable_samples = 0;
+        while Instant::now() < deadline {
+            thread::sleep(SAMPLE_INTERVAL);
+            let current = self.refresh_windows(id)?;
+            if current == windows {
+                stable_samples += 1;
+                if stable_samples >= 2 {
+                    return Ok((current, true, vec![]));
+                }
+            } else {
+                stable_samples = 0;
+                windows = current;
+            }
+        }
+        Ok((windows, false, vec![
+            "Window topology did not settle before the bounded refresh deadline; list windows again before selecting a target".into(),
+        ]))
     }
 
     fn known_window(&mut self, id: &str, window: &Window) -> Result<()> {

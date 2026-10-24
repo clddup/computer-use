@@ -216,6 +216,10 @@ unsafe fn move_to(handle: HWND, x: f64, y: f64, cancel: &AtomicBool) -> cu_proto
         x: x.round() as i32,
         y: y.round() as i32,
     };
+    // A layered overlay is not reliably transparent to WindowFromPoint across
+    // threads. Hide exactly our own HWND and wait for the pump before testing the
+    // target; never ignore an arbitrary HWND.
+    presentation::suspend_pointer()?;
     let hit = WindowFromPoint(point);
     if hit != handle && GetAncestor(hit, GA_ROOT) != handle {
         return Err(cu_protocol::Error::new(
@@ -223,7 +227,11 @@ unsafe fn move_to(handle: HWND, x: f64, y: f64, cancel: &AtomicBool) -> cu_proto
             "Target point belongs to another window",
         ));
     }
-    SetCursorPos(point.x, point.y).map_err(err)
+    SetCursorPos(point.x, point.y).map_err(err)?;
+    // The independent pointer follows only a confirmed physical move. A failed
+    // presentation update cannot make the input look successful.
+    presentation::update_pointer(handle, point.x, point.y)
+        .map_err(cu_protocol::Error::after_dispatch)
 }
 pub(super) fn perform(
     window: &Window,

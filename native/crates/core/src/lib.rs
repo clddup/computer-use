@@ -384,6 +384,9 @@ pub trait Backend {
     fn end_session(&self) -> Result<()> {
         Ok(())
     }
+    fn maintain(&self, _cancelled: bool) -> Option<Error> {
+        None
+    }
     fn list_windows(&self) -> Result<Vec<Window>>;
     fn list_apps(&self, _apps: &[ApplicationPolicy]) -> Result<Vec<Application>> {
         Err(Error::new(

@@ -2,15 +2,21 @@ use crate::{platform::backend, worker::Probe, worker_query::query};
 use cu_core::{ApplicationPolicy, Backend, NativeAction};
 use cu_protocol::*;
 use serde::de::DeserializeOwned;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 pub(crate) struct WorkerBackend {
     cancel: Arc<AtomicBool>,
+    #[cfg(windows)]
+    capture: Mutex<cu_platform_windows::CaptureManager>,
 }
 
 impl WorkerBackend {
     pub(crate) fn new(cancel: Arc<AtomicBool>) -> Self {
-        Self { cancel }
+        Self {
+            #[cfg(windows)]
+            capture: Mutex::new(cu_platform_windows::CaptureManager::new(cancel.clone())),
+            cancel,
+        }
     }
 
     fn query<T: DeserializeOwned>(&self, probe: Probe) -> Result<T> {
@@ -30,7 +36,50 @@ impl Backend for WorkerBackend {
     fn end_session(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
         cu_platform_macos::close_presentation()?;
+        #[cfg(windows)]
+        {
+            // Cleanup is best-effort across independent resources: a pointer
+            // teardown failure must not prevent the capture supervisor from
+            // being asked to close as well.
+            let pointer = cu_platform_windows::close_presentation();
+            let capture = self
+                .capture
+                .lock()
+                .map_err(|_| Error::new("cleanup_unconfirmed", "Capture manager lock poisoned"))
+                .and_then(|mut capture| capture.close());
+            match (pointer, capture) {
+                (Err(error), _) => return Err(error),
+                (Ok(()), Err(error)) => return Err(error),
+                (Ok(()), Ok(())) => {}
+            }
+        }
         Ok(())
+    }
+    fn maintain(&self, cancelled: bool) -> Option<Error> {
+        #[cfg(target_os = "macos")]
+        return cu_platform_macos::maintain(cancelled);
+        #[cfg(windows)]
+        {
+            let capture = self
+                .capture
+                .lock()
+                .map_err(|_| Error::new("cleanup_unconfirmed", "Capture manager lock poisoned"))
+                .and_then(|mut capture| {
+                    if cancelled {
+                        capture.close()
+                    } else {
+                        capture.maintain()
+                    }
+                });
+            let capture_error = capture.err();
+            let presentation_error = cu_platform_windows::maintain_presentation(cancelled);
+            capture_error.or(presentation_error)
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = cancelled;
+            None
+        }
     }
     fn capabilities(&self) -> Capabilities {
         backend().capabilities()
@@ -42,6 +91,11 @@ impl Backend for WorkerBackend {
         let windows = windows
             .into_iter()
             .filter(|window| !cu_platform_macos::is_presentation_window(&window.id))
+            .collect();
+        #[cfg(windows)]
+        let windows = windows
+            .into_iter()
+            .filter(|window| !cu_platform_windows::is_presentation_window(&window.id))
             .collect();
         Ok(windows)
     }
@@ -69,7 +123,7 @@ impl Backend for WorkerBackend {
     ) -> Result<Observation> {
         let observation: Observation = self.query(Probe::Observe {
             window: window.clone(),
-            screenshot: screenshot && !cfg!(target_os = "macos"),
+            screenshot: screenshot && !cfg!(any(target_os = "macos", windows)),
             accessibility,
         })?;
         #[cfg(target_os = "macos")]
@@ -78,6 +132,21 @@ impl Backend for WorkerBackend {
             cu_platform_macos::present(window, screenshot)?;
             if screenshot {
                 observation.images = vec![cu_platform_macos::capture(window, &self.cancel)?];
+            }
+            observation
+        };
+        #[cfg(windows)]
+        let observation = {
+            let mut observation = observation;
+            cu_platform_windows::present(window)?;
+            if screenshot {
+                observation.images = vec![self
+                    .capture
+                    .lock()
+                    .map_err(|_| {
+                        Error::new("cleanup_unconfirmed", "Capture manager lock poisoned")
+                    })?
+                    .capture(window)?];
             }
             observation
         };

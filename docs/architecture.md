@@ -16,6 +16,8 @@ Agent
 
 Rust 工程位于 `native/`，Node 工程位于 `typescript/`。MCP 与 SDK 不各自实现输入语义，共用 runtime；原生 helper 再执行权限、窗口身份、观察有效期和动作去重核验。TS 不加载 Rust 源码或私有 SDK。
 
+Windows 的 UIA 查询和 semantic action 仍在短命 worker 中运行；父 helper 持有窗口级 WGC `CaptureManager`，通过专用 supervisor 建立持续 `windows-capture` session，只保留一个有界 latest RGBA frame，在 capture callback 外编码 PNG。目标切换、PID/进程启动身份变化、窗口几何变化、取消或停止会使旧 generation 失效；启动/首帧/关闭均有界等待，未确认清理会禁止继续复用。Windows 物理输入继续在父执行线程使用真实 `SetCursorPos`/`SendInput`，按 ChatGPT/Codex 行为可自动激活目标窗口；独立 pointer overlay 只是同一真实鼠标位置的非激活、穿透可视层，不提供第二个输入设备。
+
 helper 的 `Runtime` 依赖已有 `Backend` 接口，并注入租约获取函数。生产后端保留原有隔离方式：查询和 UIA semantic 在 worker 中运行，物理输入在父执行线程运行；状态机单测使用内存后端与空租约，不获取真实桌面租约。代码按会话、应用、窗口、动作、stdio 和 worker 分离，测试不依赖真实桌面状态。
 
 macOS 的 AX 查询在短命 worker 中，截图、独立指针和持续窗口共享由长寿命 helper 主线程持有，通过有界 AppKit 事件泵维护。截图直接编码选中窗口 `SCStream` 的完整帧，标记 `capture_method=screencapturekit-stream`；不再另起截图 worker 或调用 `SCScreenshotManager`，没有桌面截图回退。只缓存最新有效帧；idle 可复用未变化内容，suspended/blank/停止会清除图像，无可用帧则有界报错。`NSEvent`/`CGEvent` 携带目标窗口 ID、屏幕/窗口局部坐标，经 `postToPid` 投递，不隐式激活目标、不回退全局 HID；键盘另校验目标应用自己的 focused window。局部坐标接口 `CGEventSetWindowLocation` 和 NSEvent window-number 事件字段是非公开兼容点，缺失或回读不一致时显式失败。
@@ -44,6 +46,7 @@ Rust `cu-protocol` 是 wire 类型源，schemars 生成 JSON Schema，再生成 
 - 会话固定批准 PID 或 host-approved application profile 的进程启动身份，窗口引用包含 PID、启动身份、原生窗口 ID 和几何。
 - 每用户一个 OS 文件锁：保守覆盖所有显示器/桌面。锁直到执行线程退出输入路径、释放 RAII guard 后才释放，不允许按 TTL 抢锁。
 - 单一当前观察，默认有效 30 秒；observe 清旧观察，进入可能副作用的动作前消耗观察。默认请求截图、关闭 accessibility；调用方需要结构化树/焦点信息时显式请求 accessibility。
+- 每个可能产生副作用的动作在 dispatch 后执行一次有界窗口拓扑刷新，并在 `ActionOutcome.window_refresh` 返回当前策略允许的窗口引用、settled 状态和 warning。刷新只更新 `session.windows`，不自动选择、激活或 observe 新窗口；调用方必须从刷新结果或后续 `list_windows` 选取新引用，再显式 observe。刷新失败不把已 dispatch 的动作改报 rejected，unknown 仍绝不重放。
 - 元素和图片 ID 必须属于当前观察；图片像素通过 `screen_bounds` 映射到桌面，支持缩放及负坐标，最终点必须在授权窗口内。
 - 每动作重核验窗口身份和几何；元素目标重新读取并匹配 locator、role、name、bounds、password、value。locator 是路径，不是强内容身份；同路径相同属性的控件替换可能无法识别。
 - UIA/AX/AT-SPI 与截图不是原子快照；拒绝检测到的变化，不声称完全消除 TOCTOU。

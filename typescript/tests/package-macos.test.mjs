@@ -24,7 +24,7 @@ describe('macOS release packaging without GUI or permission requests', () => {
       { reason: 'build-script-executed', linked_libs: ['dylib=cu_macos_bridge'], out_dir: '/build with spaces/out' },
       { reason: 'compiler-artifact', target: { name: 'cu-helper' }, executable: '/release/cu-helper', profile: { opt_level: '3', debug_assertions: false } },
     ];
-    expect(releaseArtifacts(messages.map(JSON.stringify).join('\n'))).toEqual({ helper: '/release/cu-helper', bridge: '/build with spaces/out/libcu_macos_bridge.dylib' });
+    expect(releaseArtifacts(messages.map(JSON.stringify).join('\n'))).toEqual({ helper: '/release/cu-helper', bridge: join('/build with spaces/out', 'libcu_macos_bridge.dylib') });
     messages[1].profile.debug_assertions = true;
     expect(() => releaseArtifacts(messages.map(JSON.stringify).join('\n'))).toThrow('release helper');
     expect(() => releaseArtifacts(JSON.stringify(messages[1]))).toThrow();

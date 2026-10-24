@@ -2,8 +2,14 @@ mod accessibility;
 mod applications;
 mod capture;
 mod input;
+mod overlay;
+mod presentation;
 use accessibility::{accessibility, semantic_node, semantic_perform};
 use capture::capture;
+pub use capture::CaptureManager;
+pub use presentation::{
+    close_presentation, is_presentation_window, maintain_presentation, present,
+};
 
 use cu_core::{
     cancelled, new_id, now_ms, png_base64, ApplicationPolicy, Backend, NativeAction,

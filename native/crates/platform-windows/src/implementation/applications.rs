@@ -24,7 +24,7 @@ pub(super) fn launch_app(
     if !std::path::Path::new(&app.executable).is_absolute() {
         return Err(cu_protocol::Error::new(
             "permission_denied",
-            "Application executable must be an absolute host-approved path",
+            "Windows launch requires an absolute host-approved executable; no process was started. Do not bypass app-use with shell or another launcher",
         ));
     }
     let existing = matching_windows(&WindowsBackend.list_windows()?, &app.executable);

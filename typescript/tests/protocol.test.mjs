@@ -55,6 +55,16 @@ describe('Generated TypeScript/Rust wire compatibility', () => {
       expect(result.status).toBe(1); expect(result.stderr).toContain('invalid_frame');
     }
   });
+  it('accepts post-action window refresh results without weakening strict fields', () => {
+    const outcome = {
+      action_id: 'a', helper_epoch: 'e', state: 'dispatched', mechanism: 'fixture',
+      message: 'accepted', window_refresh: {
+        attempted: true, settled: true, windows: [window], warnings: [],
+      },
+    };
+    expect(validator('ActionOutcome')(outcome)).toBe(true);
+    expect(validator('ActionOutcome')({ ...outcome, window_refresh: { ...outcome.window_refresh, extra: true } })).toBe(false);
+  });
   it('enforces safe integer timestamps and uint32/finite coordinate formats', () => {
     expect(validator('Window')({ ...window, pid: 1.5 })).toBe(false);
     expect(validator('Window')({ ...window, bounds: { ...window.bounds, x: Infinity } })).toBe(false);

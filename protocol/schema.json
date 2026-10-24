@@ -11,7 +11,8 @@
     "observation",
     "request",
     "response",
-    "window"
+    "window",
+    "window_refresh"
   ],
   "properties": {
     "action": {
@@ -40,6 +41,9 @@
     },
     "window": {
       "$ref": "#/definitions/Window"
+    },
+    "window_refresh": {
+      "$ref": "#/definitions/WindowRefresh"
     }
   },
   "definitions": {
@@ -279,6 +283,16 @@
         },
         "state": {
           "$ref": "#/definitions/ActionState"
+        },
+        "window_refresh": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WindowRefresh"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -1076,6 +1090,36 @@
         },
         "title": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WindowRefresh": {
+      "type": "object",
+      "required": [
+        "attempted",
+        "settled",
+        "warnings",
+        "windows"
+      ],
+      "properties": {
+        "attempted": {
+          "type": "boolean"
+        },
+        "settled": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Window"
+          }
         }
       },
       "additionalProperties": false

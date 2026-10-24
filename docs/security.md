@@ -33,7 +33,8 @@
 - macOS 指针为鼠标穿透、非激活窗口，系统共享标志来自真实持续 `SCStream`，不是模拟系统权限 UI；关闭截图的会话不为显示标志而采集屏幕。流与指针随切目标/stop/EOF/TTL 清理，显示不会扩大 policy 的进程范围。
 - macOS PNG 只来自所选窗口共享流，无帧/中断/锁屏时明确报错，不抓取桌面或操作登录界面。MCP instructions 与 skill 禁止 Agent 改用 shell/AppleScript 绕开；它们不是对宿主其它工具的强制沙箱，宿主仍需约束 Agent 的全局 GUI 操作能力。
 - MCP 连接可保留，但控制会话不会自动恢复；仅显式 `computer_start` 在清理成功后创建新 helper/epoch。旧观察、动作日志和不确定操作不继承、不重放。SDK `stop` 仍为实例终态。
-- UIA semantic action 先做无副作用的 pattern 预检，投递开始后发生取消/超时/失联均为 unknown；不能自动切换到 SendInput。WGC 不含 cursor 与系统 cursor 隐藏是不同概念，本项目不修改全局 cursor。
+- UIA semantic action 先做无副作用的 pattern 预检，投递开始后发生取消/超时/失联均为 unknown；不能自动切换到 SendInput。WGC 不含 cursor 与系统 cursor 隐藏是不同概念，本项目不修改全局 cursor。Windows 持续 WGC 只缓存授权窗口的最新帧，目标身份/几何变化会使旧帧失效；独立 pointer overlay 不接收焦点、不参与命中测试、不扩大 policy 范围，也不是后台定向输入。物理输入仍遵循 ChatGPT/Codex Windows 行为，可能自动激活目标窗口；停止、EOF、TTL 或共享故障会关闭 overlay/capture，清理未确认时拒绝继续复用。
+- 动作 dispatch 后的 `window_refresh` 只是策略过滤后的窗口拓扑发现，不是应用业务成功证明。新窗口不会被自动选中、激活或捕获；必须使用刷新返回的完整 `Window` 引用再 observe。刷新失败不掩盖已发生的副作用，unknown 动作永不自动重放；标题、应用名、窗口大小和语言文本都不能扩大授权范围。
 
 ## 不支持
 

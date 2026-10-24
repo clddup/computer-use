@@ -127,6 +127,16 @@ impl<B: Backend, L> Runtime<B, L> {
         caps
     }
 
+    pub(crate) fn shutdown(&mut self) -> Option<Error> {
+        self.cancel.store(true, Ordering::SeqCst);
+        self.session = None;
+        self.backend.maintain(true)
+    }
+
+    pub(crate) fn maintain(&self) -> Option<Error> {
+        self.backend.maintain(self.cancel.load(Ordering::SeqCst))
+    }
+
     pub(crate) fn release_if_cancelled(&mut self) {
         if self.session.as_ref().is_some_and(|s| now_ms() > s.expires) {
             self.cancel.store(true, Ordering::SeqCst);

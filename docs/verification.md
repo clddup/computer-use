@@ -1,6 +1,14 @@
 # 实际验证记录
 
-日期：2026-10-23（含 2026-10-17/18/19/22 基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+日期：2026-10-24（含 2026-10-23 及此前基线）。此处区分源码实现、类型检查、单测和真实桌面测试，不把 CI 配置或 cfg 排除路径当作平台验证。
+
+## 2026-10-24 Windows 持续共享流实现回归
+
+- Rust workspace `cargo test --manifest-path native/Cargo.toml --workspace --locked` 通过：core 10、helper 34、Windows platform 11，其他 crate/doc tests 通过。新增 Windows 状态机覆盖 bounded latest-frame、generation/identity/geometry fencing、取消维护、首帧/关闭确认和 overlay HWND 过滤；helper 新增通用 post-action window refresh 测试，验证动作创建新窗口后返回新鲜引用且不自动选择；这是纯 Rust 测试，不是桌面 GUI 证据。
+- Windows `x86_64-pc-windows-msvc` workspace `cargo check --locked` 通过；`cargo fmt --check` 通过。TypeScript `pnpm --dir typescript check` 通过：四包构建、协议漂移、typecheck、55 项测试。
+- 新增 `pnpm --dir typescript test:gui:windows:shared-capture`，编译自建 WinForms 红/绿/蓝窗口，通过公开 SDK 读取真实 PNG，覆盖同目标重复 observe、内容更新、目标切换、关闭目标和取消清理。脚本在非 Windows 或缺少 helper/编译器时明确 `blocked`；本轮未运行真实 GUI，因此不记录为 passed。
+- Windows 输入仍使用 `SetCursorPos`/`SendInput` 并按 ChatGPT/Codex 行为允许目标自动激活；overlay 的 no-activate/HTTRANSPARENT、DPI、多屏、Z-order、WGC border 和真实资源释放仍需在授权的交互 Windows 桌面验收。未运行 Codex 私有 helper。
+
 
 ## 2026-10-23 仓库内 release 打包
 

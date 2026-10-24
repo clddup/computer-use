@@ -210,12 +210,23 @@ pub enum ActionState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct WindowRefresh {
+    pub attempted: bool,
+    pub settled: bool,
+    pub windows: Vec<Window>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ActionOutcome {
     pub action_id: String,
     pub helper_epoch: String,
     pub state: ActionState,
     pub mechanism: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_refresh: Option<WindowRefresh>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -278,6 +289,7 @@ pub struct ProtocolTypes {
     pub observation: Observation,
     pub action: Action,
     pub action_outcome: ActionOutcome,
+    pub window_refresh: WindowRefresh,
     pub capabilities: Capabilities,
 }
 

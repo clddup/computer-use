@@ -14,7 +14,7 @@ Windows 支持固定 profile 的应用生命周期；macOS 支持动态发现运
 
 安装 Rust MSVC 工具链及 Visual Studio C++ Build Tools；构建 `native/Cargo.toml`。使用 Per-Monitor V2 DPI、进程创建时间身份、DWM frame 几何。WGC 使用真实窗口捕获，不暗中回退 GDI。实际帧尺寸与窗口几何不匹配时拒绝，避免错误坐标注入。
 
-物理输入需要目标前台窗口；遮挡检查与动作前重验证仍不能消除所有异步窗口切换竞态。v2 UIA semantic action 不注入鼠标/键盘、不显式激活窗口，但 provider 可以改变前台或焦点；后台 WinForms Invoke 已实测抢前台，不能称为虚拟鼠标或输入隔离。UIA 调用在可终止子进程内。WGC `WithoutCursor` 仅排除截图光标，不隐藏系统 cursor。自建 fixture 的 125% 缩放截图与坐标点击已在本机实测，不代表所有 DPI/多屏组合已覆盖。
+物理输入需要目标前台窗口；遮挡检查与动作前重验证仍不能消除所有异步窗口切换竞态，并按 ChatGPT/Codex Windows 行为在需要时自动激活目标窗口。v2 UIA semantic action 不注入鼠标/键盘、不显式激活窗口，但 provider 可以改变前台或焦点；后台 WinForms Invoke 已实测抢前台，不能称为虚拟鼠标或输入隔离。UIA 调用在可终止子进程内。WGC 由父 helper 持有窗口级持续流和有界 latest-frame slot；同目标 metadata-only observe 复用流，目标身份或几何变化先使旧流失效。`WithoutCursor` 仅排除截图光标，不隐藏系统 cursor。物理输入成功后，Windows 独立 pointer overlay 显示最近位置；它是非激活、鼠标穿透的可视层，不改变 `SetCursorPos`/`SendInput`，也不进入窗口枚举或截图。动作 dispatch 后的 `window_refresh` 会有界刷新当前授权窗口拓扑；新 dialog/document 不自动切换捕获目标，必须使用返回的 `Window` 引用重新 observe，不依赖应用标题或专名。自建 fixture 的 125% 缩放截图与坐标点击已在本机实测，不代表所有 DPI/多屏组合已覆盖。新的持续流专项脚本为 `pnpm --dir typescript test:gui:windows:shared-capture`，必须在交互 Windows 桌面运行。
 
 发布构建：`cargo build --manifest-path native/Cargo.toml --release --locked`。helper 在 `native/target/release/cu-helper.exe`；TS 使用 `--helper` 显式绝对路径。
 
